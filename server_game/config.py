@@ -11,8 +11,9 @@ MOVE_DECEL = 2400
 PROTECT = 2.0
 DASH_DIST = 112
 DASH_CD = 1.15
+MOVE_COLLISION_STEP = 14.0
 
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 15
 SERVER_TICK_HZ = 30
 SERVER_DT = 1 / SERVER_TICK_HZ
 SNAPSHOT_HZ = 16
@@ -30,7 +31,7 @@ ITEM_INTEREST_RADIUS = 980
 EVENT_INTEREST_RADIUS = 1080
 MAX_SYNC_PLAYERS_PER_CLIENT = 32
 MAX_SYNC_ZOMBIES_PER_CLIENT = 72
-MAX_SYNC_BULLETS_PER_CLIENT = 48
+MAX_SYNC_BULLETS_PER_CLIENT = 40
 MAX_SYNC_ITEMS_PER_CLIENT = 16
 LEADERBOARD_SIZE = 8
 
@@ -38,32 +39,157 @@ BULLET_SPEED = 760
 BULLET_LIFE = 0.9
 BULLET_R = 4.2
 BULLET_DAMAGE = 26
+MUZZLE_FORWARD = 34
 FIRE_INTERVAL = 0.145
 RAPID_FIRE_MULT = 0.58
 SPREAD_ANGLE = 0.16
 MAX_BULLETS = 460
+MELEE_RANGE = 64
+MELEE_AUTO_RANGE = 52
+MELEE_ARC = 1.65
+MELEE_DAMAGE = 34
+MELEE_COOLDOWN = 0.48
+MELEE_KNOCKBACK = 46
+MAG_SIZE = 24
+MAX_RESERVE_AMMO = 168
+START_RESERVE_AMMO = 108
+RELOAD_SECONDS = 1.15
+AMMO_PICKUP_MIN = 16
+AMMO_PICKUP_MAX = 30
+MATERIAL_PICKUP_MIN = 1
+MATERIAL_PICKUP_MAX = 3
+WEAPON_PARTS_PER_UPGRADE = 4
+WEAPON_MAX_LEVEL = 8
+WEAPON_ORDER = ["pistol", "rifle", "shotgun", "smg", "launcher"]
+WEAPON_TYPES = {
+    "pistol": {
+        "name": "手枪",
+        "mag_size": 24,
+        "fire_interval": 0.145,
+        "reload_seconds": 1.15,
+        "bullet_speed": 760,
+        "bullet_life": 0.9,
+        "bullet_radius": 4.2,
+        "damage": 26,
+        "pellets": 1,
+        "spread": 0.0,
+        "ammo_cost": 1,
+        "muzzle": 34,
+        "color": "#dce7f1",
+        "explosion_radius": 0,
+        "pierce": 0,
+    },
+    "rifle": {
+        "name": "步枪",
+        "mag_size": 24,
+        "fire_interval": 0.18,
+        "reload_seconds": 1.25,
+        "bullet_speed": 940,
+        "bullet_life": 1.05,
+        "bullet_radius": 4.4,
+        "damage": 42,
+        "pellets": 1,
+        "spread": 0.035,
+        "ammo_cost": 1,
+        "muzzle": 44,
+        "color": "#8fd0ff",
+        "explosion_radius": 0,
+        "pierce": 1,
+    },
+    "shotgun": {
+        "name": "散弹枪",
+        "mag_size": 8,
+        "fire_interval": 0.62,
+        "reload_seconds": 1.35,
+        "bullet_speed": 720,
+        "bullet_life": 0.48,
+        "bullet_radius": 4.6,
+        "damage": 17,
+        "pellets": 7,
+        "spread": 0.38,
+        "ammo_cost": 1,
+        "muzzle": 35,
+        "color": "#ffc247",
+        "explosion_radius": 0,
+        "pierce": 0,
+    },
+    "smg": {
+        "name": "冲锋枪",
+        "mag_size": 36,
+        "fire_interval": 0.068,
+        "reload_seconds": 1.2,
+        "bullet_speed": 760,
+        "bullet_life": 0.72,
+        "bullet_radius": 3.6,
+        "damage": 16,
+        "pellets": 1,
+        "spread": 0.095,
+        "ammo_cost": 1,
+        "muzzle": 32,
+        "color": "#48f0a0",
+        "explosion_radius": 0,
+        "pierce": 0,
+    },
+    "launcher": {
+        "name": "爆破枪",
+        "mag_size": 4,
+        "fire_interval": 0.78,
+        "reload_seconds": 1.75,
+        "bullet_speed": 520,
+        "bullet_life": 1.05,
+        "bullet_radius": 7.2,
+        "damage": 34,
+        "pellets": 1,
+        "spread": 0.02,
+        "ammo_cost": 1,
+        "muzzle": 44,
+        "color": "#ff8844",
+        "explosion_radius": 150,
+        "explosion_damage": 78,
+        "pierce": 0,
+    },
+}
+VEHICLE_SECONDS = 10.0
+VEHICLE_SPEED_MULT = 1.52
+VEHICLE_RAM_DAMAGE = 76
+VEHICLE_RAM_COOLDOWN = 0.34
+FACILITY_SEARCH_SECONDS = 2.25
+FACILITY_MED_HEAL_PER_SEC = 8
+FACILITY_TOXIC_DAMAGE_PER_SEC = 8
 
 MAX_ZOMBIES = 220
-INITIAL_ZOMBIES = 42
-ZOMBIE_SPAWN_DT = 0.18
-WAVE_BASE = 58
-WAVE_STEP = 18
+INITIAL_ZOMBIES = 48
+ZOMBIE_SPAWN_DT = 0.12
+WAVE_BASE = 92
+WAVE_STEP = 24
 ZOMBIE_ATTACK_RANGE = 8
 PRESSURE_SPAWN_MIN_DIST = 560
 PRESSURE_SPAWN_MAX_DIST = 900
-WAVE_BURST_BASE = 18
-WAVE_BURST_PER_PLAYER = 5
-WAVE_BURST_MAX = 54
-BOSS_WAVE_INTERVAL = 5
+WAVE_BURST_BASE = 24
+WAVE_BURST_PER_PLAYER = 6
+WAVE_BURST_MAX = 62
+BOSS_WAVE_INTERVAL = 3
+CAMPAIGN_FINAL_WAVE = 6
 DIRECTOR_CHECK_DT = 1.05
 DIRECTOR_LEASH_RADIUS = 1680
 DIRECTOR_LEASH_AFTER = 4.5
-DIRECTOR_MIN_NEAR_ZOMBIES = 10
-DIRECTOR_NEAR_ZOMBIES_PER_PLAYER = 3
-DIRECTOR_MAX_NEAR_ZOMBIES = 46
-DIRECTOR_MAX_PRESSURE_SPAWNS = 6
+DIRECTOR_MIN_NEAR_ZOMBIES = 18
+DIRECTOR_NEAR_ZOMBIES_PER_PLAYER = 6
+DIRECTOR_MAX_NEAR_ZOMBIES = 54
+DIRECTOR_MAX_PRESSURE_SPAWNS = 8
+FOG_WAVE_COOLDOWN = 16.0
+FOG_WAVE_COUNT_BASE = 10
+FOG_WAVE_COUNT_PER_PLAYER = 5
+FOG_WAVE_MAX = 28
+FOG_WAVE_MIN_DIST = 360
+FOG_WAVE_MAX_DIST = 760
+INFECTION_SOURCE_BASE = 34
+INFECTION_SOURCE_STEP = 8
+INFECTION_SOURCE_MAX = 96
 ZOMBIE_STUCK_EPS = 1.1
 ZOMBIE_STUCK_AFTER = 0.35
+PATHFIND_INTERVAL = 0.5
+PATHFIND_STUCK_REPATH_SECONDS = 0.22
 LEAPER_MIN_RANGE = 220
 LEAPER_MAX_RANGE = 620
 LEAPER_SPEED_MULT = 2.7
@@ -74,27 +200,14 @@ SCREAMER_RALLY_SECONDS = 2.8
 SCREAMER_RALLY_MULT = 1.22
 BLOATER_RADIUS = 150
 BLOATER_PLAYER_DAMAGE = 24
-BLOATER_BASE_DAMAGE = 50
 BLOATER_ZOMBIE_DAMAGE = 38
-
-BASE_X = MAP_W // 2
-BASE_Y = MAP_H // 2
-BASE_R = 54
-BASE_MAX_HP = 900
-BASE_REPAIR_PER_WAVE = 170
-BASE_REPAIR_PER_PLAYER = 18
-BASE_DAMAGE_ALERT_CD = 0.85
-BASE_REVIVE_DELAY = 5.0
-BASE_REVIVE_HP_PCT = 0.38
-BASE_OBSTACLE_CLEARANCE = 185
-BASE_TARGET_BIAS = 0.72
 
 MAZE_COLS = 11
 MAZE_ROWS = 11
 MAZE_CELL = 280
 MAZE_WALL = 42
 MAZE_SAFE_JITTER = 62
-MAZE_EXTRA_LINKS = 16
+MAZE_EXTRA_LINKS = 8
 
 MISSION_CAPTURE_RADIUS = 78
 MISSION_CAPTURE_SECONDS = 3.8
@@ -103,17 +216,20 @@ EXTRACTION_COUNT = 3
 EXTRACTION_CAPTURE_SECONDS = 3.2
 EXTRACTION_DISCOVER_RADIUS = 460
 TASK_PICKUPS_PER_STAGE = 5
-TASK_DROP_CHANCE = 0.42
+TASK_DROP_CHANCE = 0.34
+EXTRACTION_REVEAL_SPAWNS = 6
+EXTRACTION_CHARGE_SPAWN_DT = 1.05
+EXTRACTION_CHARGE_SPAWNS = 2
 MISSION_MIN_DIST = 460
 MISSION_MAX_DIST = 820
 MISSION_REWARD_SCORE = 55
 MISSION_REWARD_XP = 32
 MISSION_REPAIR_AMOUNT = 115
 
-MAX_ITEMS = 10
-INITIAL_ITEMS = 3
+MAX_ITEMS = 7
+INITIAL_ITEMS = 1
 ITEM_R = 15
-ITEM_SPAWN_DT = 7.5
+ITEM_SPAWN_DT = 13.5
 NUKE_RADIUS = 440
 
 LEVEL_XP_BASE = 90
@@ -132,7 +248,7 @@ ZOMBIE_TYPES = {
         "radius": 16,
         "damage": 15,
         "score": 12,
-        "color": "#6bd36b",
+        "color": "#b8b09d",
         "weight": 10,
         "unlock": 1,
     },
@@ -142,7 +258,7 @@ ZOMBIE_TYPES = {
         "radius": 13,
         "damage": 12,
         "score": 16,
-        "color": "#9dff7a",
+        "color": "#d0b38d",
         "weight": 4,
         "unlock": 1,
     },
@@ -152,9 +268,19 @@ ZOMBIE_TYPES = {
         "radius": 11,
         "damage": 9,
         "score": 18,
-        "color": "#7bdcff",
+        "color": "#7b8b8e",
         "weight": 3,
-        "unlock": 2,
+        "unlock": 1,
+    },
+    "shade": {
+        "hp": 42,
+        "speed": 146,
+        "radius": 14,
+        "damage": 16,
+        "score": 26,
+        "color": "#d6eceb",
+        "weight": 2,
+        "unlock": 1,
     },
     "brute": {
         "hp": 132,
@@ -162,9 +288,9 @@ ZOMBIE_TYPES = {
         "radius": 24,
         "damage": 28,
         "score": 38,
-        "color": "#8a6a4a",
+        "color": "#8a5b4a",
         "weight": 2,
-        "unlock": 2,
+        "unlock": 1,
     },
     "toxic": {
         "hp": 62,
@@ -172,9 +298,9 @@ ZOMBIE_TYPES = {
         "radius": 17,
         "damage": 20,
         "score": 22,
-        "color": "#c4ff43",
+        "color": "#9db64b",
         "weight": 2,
-        "unlock": 3,
+        "unlock": 1,
     },
     "armored": {
         "hp": 188,
@@ -182,9 +308,9 @@ ZOMBIE_TYPES = {
         "radius": 25,
         "damage": 34,
         "score": 55,
-        "color": "#a9b1bc",
+        "color": "#8f98a3",
         "weight": 2,
-        "unlock": 4,
+        "unlock": 2,
     },
     "leaper": {
         "hp": 54,
@@ -192,9 +318,9 @@ ZOMBIE_TYPES = {
         "radius": 15,
         "damage": 18,
         "score": 32,
-        "color": "#ffb347",
+        "color": "#c88b61",
         "weight": 2,
-        "unlock": 5,
+        "unlock": 2,
     },
     "screamer": {
         "hp": 72,
@@ -202,9 +328,9 @@ ZOMBIE_TYPES = {
         "radius": 18,
         "damage": 12,
         "score": 44,
-        "color": "#d88cff",
+        "color": "#b68abf",
         "weight": 1,
-        "unlock": 6,
+        "unlock": 3,
     },
     "bloater": {
         "hp": 118,
@@ -212,9 +338,9 @@ ZOMBIE_TYPES = {
         "radius": 23,
         "damage": 24,
         "score": 46,
-        "color": "#ff8f52",
+        "color": "#b8694a",
         "weight": 1,
-        "unlock": 7,
+        "unlock": 3,
     },
     "boss": {
         "hp": 720,
@@ -222,18 +348,25 @@ ZOMBIE_TYPES = {
         "radius": 34,
         "damage": 42,
         "score": 220,
-        "color": "#ff4d7a",
+        "color": "#d9445f",
         "weight": 0,
-        "unlock": 5,
+        "unlock": 3,
     },
 }
 
 ITEM_TYPES = {
-    "rapid": {"color": "#44ffaa", "icon": "R", "name": "速射", "weight": 4},
-    "spread": {"color": "#ffcc44", "icon": "3", "name": "三连发", "weight": 3},
-    "shield": {"color": "#ffffff", "icon": "S", "name": "护盾", "weight": 3},
-    "medkit": {"color": "#ff6688", "icon": "+", "name": "医疗包", "weight": 4},
+    "rapid": {"color": "#44ffaa", "icon": "R", "name": "速射", "weight": 2},
+    "spread": {"color": "#ffcc44", "icon": "3", "name": "三连发", "weight": 2},
+    "shield": {"color": "#ffffff", "icon": "S", "name": "护盾", "weight": 1},
+    "medkit": {"color": "#ff6688", "icon": "+", "name": "医疗包", "weight": 2},
+    "ammo": {"color": "#dce7f1", "icon": "A", "name": "弹药包", "weight": 2},
+    "parts": {"color": "#8fd0ff", "icon": "P", "name": "武器零件", "weight": 2},
     "nuke": {"color": "#ff8844", "icon": "!", "name": "清场炸弹", "weight": 1},
+    "weapon_rifle": {"color": "#8fd0ff", "icon": "AR", "name": "步枪箱", "weight": 0, "weapon": "rifle"},
+    "weapon_shotgun": {"color": "#ffc247", "icon": "SG", "name": "散弹枪箱", "weight": 0, "weapon": "shotgun"},
+    "weapon_smg": {"color": "#48f0a0", "icon": "SMG", "name": "冲锋枪箱", "weight": 0, "weapon": "smg"},
+    "weapon_launcher": {"color": "#ff8844", "icon": "EX", "name": "爆破枪箱", "weight": 0, "weapon": "launcher"},
+    "vehicle": {"color": "#ffc247", "icon": "V", "name": "维修推车", "weight": 0},
     "fuse": {"color": "#66d9ff", "icon": "F", "name": "保险丝", "weight": 0, "task": True},
     "sample": {"color": "#b7ff47", "icon": "V", "name": "病毒样本", "weight": 0, "task": True},
     "keycard": {"color": "#d98cff", "icon": "K", "name": "门禁卡", "weight": 0, "task": True},
@@ -245,7 +378,26 @@ STORY_BEATS = [
     "应急灯一闪一灭，地图结构已经和上一层完全不同。",
     "地面有新鲜抓痕，撤离点附近一定有更重的东西。",
     "广播重复着不存在的坐标，真正的出口不会主动暴露。",
-    "迷宫深处传来尖叫，尸群正在向脚步声聚拢。",
+    "设施深处传来尖叫，尸群正在向脚步声聚拢。",
     "血雾从通风管漏下来，补给越来越少。",
     "铁门还没开完，撑住最后几秒，不要回头。",
+    "墙上的门牌开始重复，说明你已经被设施记住了。",
+    "下一层没有安全屋，只有三条互相矛盾的撤离记录。",
+    "有个频道一直喊你的名字，但队伍里没人听见。",
+    "档案碎片越完整，设施越不想让你离开。",
+]
+
+CASE_FILES = [
+    "档案 01：第一批撤离名单被人为删除，剩下的人不是被遗忘，而是被筛选。",
+    "档案 02：设施墙体会重组，像是在把幸存者赶向同一个房间。",
+    "档案 03：样本不是解药，是门禁系统判断你还像不像人的钥匙。",
+    "档案 04：黑墙巨像身上的编号，和地下实验室主管的门牌一致。",
+    "档案 05：广播里的求救声来自未来 9 分钟后的你自己。",
+    "档案 06：真正的撤离点从不发光，它只在你弹尽时开门。",
+    "档案 07：安保电梯只向下运行，系统日志却显示它已经抵达地面。",
+    "档案 08：维修通道里堆满弹药，像有人提前知道你会走这条路。",
+    "档案 09：净化闸门扫描到的不是病毒，而是记忆缺口。",
+    "档案 10：样本编号和幸存者腕带一致，感染可能从撤离开始。",
+    "档案 11：每次重组楼层，都会多出一间没有门的观察室。",
+    "档案 12：最终出口需要一段从未播出的录音作为钥匙。",
 ]

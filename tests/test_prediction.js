@@ -3,7 +3,7 @@ const prediction = require('../static/js/prediction.js');
 
 assert.deepStrictEqual(
   prediction.inputVector({ right: true, down: true }).map((n) => Number(n.toFixed(3))),
-  [0.707, 0.707]
+  [0.707, 0.707],
 );
 
 let player = { x: 100, y: 100 };
@@ -33,17 +33,12 @@ assert.ok(result.error > 20);
 assert.strictEqual(predictor.pending.length, 2);
 assert.strictEqual(Number(player.x.toFixed(1)), 66);
 
-const blocked = prediction.moveWithCollision(
-  100,
-  100,
-  16,
-  40,
-  0,
-  3000,
-  3000,
-  [{ x: 120, y: 80, w: 40, h: 40 }]
-);
+const blocked = prediction.moveWithCollision(100, 100, 16, 40, 0, 3000, 3000, [{ x: 120, y: 80, w: 40, h: 40 }]);
 assert.deepStrictEqual(blocked, [100, 100]);
+
+const tunnelBlocked = prediction.moveWithCollision(100, 100, 16, 150, 0, 3000, 3000, [{ x: 170, y: 80, w: 42, h: 40 }]);
+assert.ok(tunnelBlocked[0] < 170 - 16 + 1);
+assert.ok(tunnelBlocked[0] > 130);
 
 const softPlayer = { x: 100, y: 100, vx: 0, vy: 0 };
 const softPredictor = prediction.createPredictor({

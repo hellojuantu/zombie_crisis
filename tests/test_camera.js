@@ -1,15 +1,15 @@
 const assert = require('assert');
 const camera = require('../static/js/camera.js');
 
-assert.deepStrictEqual(
-  camera.targetTopLeft(100, 100, { viewportW: 200, viewportH: 200, mapW: 1000, mapH: 1000 }),
-  { x: 0, y: 0 }
-);
+assert.deepStrictEqual(camera.targetTopLeft(100, 100, { viewportW: 200, viewportH: 200, mapW: 1000, mapH: 1000 }), {
+  x: 0,
+  y: 0,
+});
 
-assert.deepStrictEqual(
-  camera.targetTopLeft(950, 950, { viewportW: 200, viewportH: 200, mapW: 1000, mapH: 1000 }),
-  { x: 800, y: 800 }
-);
+assert.deepStrictEqual(camera.targetTopLeft(950, 950, { viewportW: 200, viewportH: 200, mapW: 1000, mapH: 1000 }), {
+  x: 800,
+  y: 800,
+});
 
 const cam = camera.createCamera({
   stiffness: 10,

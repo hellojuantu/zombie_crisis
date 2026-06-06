@@ -2,9 +2,9 @@ export function createEffects() {
   const particles = [];
   const rings = [];
   const decals = [];
-  const maxParticles = 260;
-  const maxRings = 28;
-  const maxDecals = 90;
+  const maxParticles = 170;
+  const maxRings = 18;
+  const maxDecals = 55;
 
   function trim() {
     while (particles.length > maxParticles) particles.shift();
@@ -36,9 +36,33 @@ export function createEffects() {
     trim();
   }
 
+  function line(x1, y1, x2, y2, color, life = 0.07, width = 2) {
+    particles.push({ x: x1, y: y1, dx: x2 - x1, dy: y2 - y1, color, life, maxLife: life, size: width, line: true });
+    trim();
+  }
+
   function tracer(x1, y1, x2, y2, color) {
     rings.push({ x: x2, y: y2, radius: 16, color, life: 0.16, maxLife: 0.16, width: 2 });
     particles.push({ x: x1, y: y1, dx: x2 - x1, dy: y2 - y1, color, life: 0.08, maxLife: 0.08, size: 1, line: true });
+    trim();
+  }
+
+  function slash(x, y, angle, radius, color, life = 0.16) {
+    particles.push({
+      x,
+      y,
+      dx: 0,
+      dy: 0,
+      color,
+      life,
+      maxLife: life,
+      size: 1,
+      slash: true,
+      angle,
+      radius,
+      arc: 1.35,
+      width: 11,
+    });
     trim();
   }
 
@@ -82,10 +106,11 @@ export function createEffects() {
     decals,
     particlesAt,
     ring,
+    line,
     tracer,
+    slash,
     blood,
     update,
     clear,
   };
 }
-

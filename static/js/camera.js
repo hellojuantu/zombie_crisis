@@ -26,14 +26,17 @@
   }
 
   function createCamera(options) {
-    const cfg = Object.assign({
-      stiffness: 18,
-      snapDistance: 260,
-      viewportW: 1,
-      viewportH: 1,
-      mapW: 3000,
-      mapH: 3000,
-    }, options || {});
+    const cfg = Object.assign(
+      {
+        stiffness: 18,
+        snapDistance: 260,
+        viewportW: 1,
+        viewportH: 1,
+        mapW: 3000,
+        mapH: 3000,
+      },
+      options || {},
+    );
     const state = { x: 0, y: 0, ready: false };
 
     function configure(options) {

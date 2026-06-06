@@ -1,0 +1,12 @@
+{
+  "name": "zombie-crisis",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write \"README.md\" \"AGENTS.md\" \"templates/**/*.html\" \"static/js/**/*.js\" \"tests/**/*.js\"",
+    "format:check": "prettier --check \"README.md\" \"AGENTS.md\" \"templates/**/*.html\" \"static/js/**/*.js\" \"tests/**/*.js\""
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3"
+  }
+}

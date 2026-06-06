@@ -3,7 +3,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ZCProtocol = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window, function () {
-  const PROTOCOL_VERSION = 9;
+  const PROTOCOL_VERSION = 15;
 
   const PLAYER = Object.freeze({
     X: 0,
@@ -28,7 +28,21 @@
     KILLS: 19,
     SPREAD: 20,
     MAX_HP: 21,
-    LENGTH: 22,
+    AMMO: 22,
+    MAG_SIZE: 23,
+    RESERVE_AMMO: 24,
+    MATERIALS: 25,
+    LORE: 26,
+    WEAPON_LEVEL: 27,
+    RELOAD_CD: 28,
+    WEAPON_ID: 29,
+    WEAPON_NAME: 30,
+    WEAPONS: 31,
+    VEHICLE: 32,
+    VEHICLE_CD: 33,
+    FACILITY: 34,
+    FACILITY_STATUS: 35,
+    LENGTH: 36,
   });
 
   const ZOMBIE = Object.freeze({
@@ -54,7 +68,14 @@
     RADIUS: 5,
     OWNER: 6,
     LIFE: 7,
-    LENGTH: 8,
+    WEAPON: 8,
+    EXPLOSION_RADIUS: 9,
+    DAMAGE: 10,
+    SPAWN_X: 11,
+    SPAWN_Y: 12,
+    PREV_X: 13,
+    PREV_Y: 14,
+    LENGTH: 15,
   });
 
   const ITEM = Object.freeze({
@@ -100,6 +121,22 @@
       speed: numberAt(tuple, PLAYER.SPEED, 315),
       kills: numberAt(tuple, PLAYER.KILLS, 0),
       spread: Boolean(tuple[PLAYER.SPREAD]),
+      ammo: numberAt(tuple, PLAYER.AMMO, 24),
+      magSize: numberAt(tuple, PLAYER.MAG_SIZE, 24),
+      reserveAmmo: numberAt(tuple, PLAYER.RESERVE_AMMO, 0),
+      materials: numberAt(tuple, PLAYER.MATERIALS, 0),
+      lore: numberAt(tuple, PLAYER.LORE, 0),
+      weaponLevel: numberAt(tuple, PLAYER.WEAPON_LEVEL, 1),
+      reloadCd: numberAt(tuple, PLAYER.RELOAD_CD, 0),
+      weapon: tuple[PLAYER.WEAPON_ID] || 'pistol',
+      weaponName: tuple[PLAYER.WEAPON_NAME] || '手枪',
+      weapons: String(tuple[PLAYER.WEAPONS] || 'pistol')
+        .split(',')
+        .filter(Boolean),
+      vehicle: Boolean(tuple[PLAYER.VEHICLE]),
+      vehicleCd: numberAt(tuple, PLAYER.VEHICLE_CD, 0),
+      facility: tuple[PLAYER.FACILITY] || '',
+      facilityStatus: tuple[PLAYER.FACILITY_STATUS] || '',
     };
   }
 
@@ -130,6 +167,13 @@
       radius: numberAt(tuple, BULLET.RADIUS, 4),
       owner: tuple[BULLET.OWNER] || null,
       life: numberAt(tuple, BULLET.LIFE, 0),
+      weapon: tuple[BULLET.WEAPON] || 'pistol',
+      explosionRadius: numberAt(tuple, BULLET.EXPLOSION_RADIUS, 0),
+      damage: numberAt(tuple, BULLET.DAMAGE, 0),
+      spawnX: numberAt(tuple, BULLET.SPAWN_X, numberAt(tuple, BULLET.X, 0)),
+      spawnY: numberAt(tuple, BULLET.SPAWN_Y, numberAt(tuple, BULLET.Y, 0)),
+      prevX: numberAt(tuple, BULLET.PREV_X, numberAt(tuple, BULLET.SPAWN_X, numberAt(tuple, BULLET.X, 0))),
+      prevY: numberAt(tuple, BULLET.PREV_Y, numberAt(tuple, BULLET.SPAWN_Y, numberAt(tuple, BULLET.Y, 0))),
     };
   }
 

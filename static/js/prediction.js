@@ -16,16 +16,36 @@
     return (cx - nx) ** 2 + (cy - ny) ** 2 < cr * cr;
   }
 
-  function moveWithCollision(x, y, radius, dx, dy, mapW, mapH, obstacles) {
+  function moveOnce(x, y, radius, dx, dy, mapW, mapH, obstacles) {
     let nx = Math.max(radius, Math.min(mapW - radius, x + dx));
     let ny = Math.max(radius, Math.min(mapH - radius, y + dy));
     for (const o of obstacles || []) {
       if (!circleRect(nx, ny, radius, o.x, o.y, o.w, o.h)) continue;
       if (!circleRect(nx, y, radius, o.x, o.y, o.w, o.h)) ny = y;
       else if (!circleRect(x, ny, radius, o.x, o.y, o.w, o.h)) nx = x;
-      else { nx = x; ny = y; }
+      else {
+        nx = x;
+        ny = y;
+      }
     }
     return [nx, ny];
+  }
+
+  function moveWithCollision(x, y, radius, dx, dy, mapW, mapH, obstacles) {
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 0.01) return [x, y];
+    const steps = Math.max(1, Math.ceil(dist / 14));
+    const stepX = dx / steps;
+    const stepY = dy / steps;
+    let cx = x;
+    let cy = y;
+    for (let i = 0; i < steps; i += 1) {
+      const [nx, ny] = moveOnce(cx, cy, radius, stepX, stepY, mapW, mapH, obstacles);
+      if (Math.abs(nx - cx) < 0.001 && Math.abs(ny - cy) < 0.001) break;
+      cx = nx;
+      cy = ny;
+    }
+    return [cx, cy];
   }
 
   function approach(current, target, step) {
@@ -40,7 +60,7 @@
     const speed = cfg.speed * (input.speedBoost || 1);
     const targetVx = dx * speed;
     const targetVy = dy * speed;
-    const rate = (dx || dy) ? cfg.accel : cfg.decel;
+    const rate = dx || dy ? cfg.accel : cfg.decel;
     player.vx = approach(player.vx || 0, targetVx, rate * dt);
     player.vy = approach(player.vy || 0, targetVy, rate * dt);
     if (Math.abs(player.vx) < 0.01) player.vx = 0;
@@ -49,18 +69,21 @@
   }
 
   function createPredictor(options) {
-    const cfg = Object.assign({
-      speed: 360,
-      radius: 16,
-      mapW: 3000,
-      mapH: 3000,
-      softSnap: 10,
-      hardSnap: 90,
-      softFactor: 0.12,
-      accel: 1800,
-      decel: 2400,
-      maxPending: 180,
-    }, options || {});
+    const cfg = Object.assign(
+      {
+        speed: 360,
+        radius: 16,
+        mapW: 3000,
+        mapH: 3000,
+        softSnap: 10,
+        hardSnap: 90,
+        softFactor: 0.12,
+        accel: 1800,
+        decel: 2400,
+        maxPending: 180,
+      },
+      options || {},
+    );
     const pending = [];
 
     function predict(player, input, dt, seq, obstacles) {
@@ -75,7 +98,7 @@
         velocity.vy * dt,
         cfg.mapW,
         cfg.mapH,
-        obstacles
+        obstacles,
       );
       player.x = x;
       player.y = y;
@@ -96,7 +119,7 @@
           velocity.vy * frame.dt,
           cfg.mapW,
           cfg.mapH,
-          obstacles
+          obstacles,
         );
         player.x = pos[0];
         player.y = pos[1];

@@ -13,6 +13,18 @@ function makeCanvas(w, h) {
   return canvas;
 }
 
+const WEAPON_VISUALS = Object.freeze({
+  pistol: { muzzle: 34, barrel: 34, core: 20, width: 5 },
+  rifle: { muzzle: 44, barrel: 44, core: 26, width: 5 },
+  shotgun: { muzzle: 35, barrel: 35, core: 20, width: 7 },
+  smg: { muzzle: 32, barrel: 32, core: 20, width: 5 },
+  launcher: { muzzle: 44, barrel: 44, core: 20, width: 9 },
+});
+
+function weaponVisual(weapon) {
+  return WEAPON_VISUALS[weapon] || WEAPON_VISUALS.pistol;
+}
+
 function makeZombieSprite(type, color) {
   const isBoss = type === 'boss';
   const isCrawler = type === 'crawler';
@@ -20,18 +32,27 @@ function makeZombieSprite(type, color) {
   const isLeaper = type === 'leaper';
   const isScreamer = type === 'screamer';
   const isBloater = type === 'bloater';
+  const isShade = type === 'shade';
   const canvas = makeCanvas(96, 96);
   const ctx = canvas.getContext('2d');
   ctx.translate(48, 48);
   ctx.shadowColor = hexrgba(color, 0.65);
-  ctx.shadowBlur = isBoss ? 24 : type === 'toxic' || isScreamer ? 18 : isBloater ? 15 : 8;
+  ctx.shadowBlur = isBoss ? 24 : type === 'toxic' || isScreamer || isShade ? 18 : isBloater ? 15 : 8;
   ctx.fillStyle = 'rgba(0,0,0,.34)';
   ctx.beginPath();
-  ctx.ellipse(0, isCrawler ? 28 : 24, isBoss ? 32 : isCrawler ? 22 : 25, isBoss ? 14 : isCrawler ? 8 : 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    0,
+    isCrawler ? 28 : 24,
+    isBoss ? 32 : isCrawler ? 22 : 25,
+    isBoss ? 14 : isCrawler ? 8 : 11,
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   ctx.rotate(isLeaper ? -0.28 : -0.12);
   ctx.lineCap = 'round';
-  ctx.strokeStyle = isBoss ? '#3c1724' : isArmored ? '#3a4048' : '#283322';
+  ctx.strokeStyle = isBoss ? '#3c1724' : isArmored ? '#3a4048' : isShade ? '#253839' : '#283322';
   ctx.lineWidth = isBoss ? 11 : isCrawler ? 6 : 8;
   ctx.beginPath();
   ctx.moveTo(-16, isCrawler ? 6 : -3);
@@ -39,9 +60,27 @@ function makeZombieSprite(type, color) {
   ctx.moveTo(17, isCrawler ? 7 : -1);
   ctx.lineTo(isBoss ? 40 : isCrawler ? 36 : 34, isBoss ? 15 : isCrawler ? 20 : 11);
   ctx.stroke();
-  ctx.fillStyle = isBoss ? '#431b2a' : type === 'brute' ? '#5b4837' : isArmored ? '#5f6975' : isBloater ? '#6b4b32' : color;
+  ctx.fillStyle = isBoss
+    ? '#431b2a'
+    : type === 'brute'
+      ? '#5b4837'
+      : isArmored
+        ? '#5f6975'
+        : isBloater
+          ? '#6b4b32'
+          : isShade
+            ? 'rgba(214,236,235,.72)'
+            : color;
   ctx.beginPath();
-  ctx.ellipse(0, isCrawler ? 12 : 5, isBoss ? 27 : type === 'brute' || isArmored ? 21 : isBloater ? 24 : isCrawler ? 20 : 17, isBoss ? 30 : isCrawler ? 15 : type === 'runner' || isLeaper ? 21 : isBloater ? 27 : 25, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    0,
+    isCrawler ? 12 : 5,
+    isBoss ? 27 : type === 'brute' || isArmored ? 21 : isBloater ? 24 : isCrawler ? 20 : 17,
+    isBoss ? 30 : isCrawler ? 15 : type === 'runner' || isLeaper ? 21 : isBloater ? 27 : 25,
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   if (isArmored) {
     ctx.strokeStyle = '#c9d4df';
@@ -68,9 +107,17 @@ function makeZombieSprite(type, color) {
     ctx.lineTo(22, 10);
     ctx.stroke();
   }
-  ctx.fillStyle = isScreamer ? '#332242' : '#2b3a2b';
+  ctx.fillStyle = isScreamer ? '#332242' : isShade ? '#d6eceb' : '#2b3a2b';
   ctx.beginPath();
-  ctx.ellipse(0, isCrawler ? -9 : -22, isBoss ? 19 : type === 'brute' || isArmored ? 16 : isScreamer ? 15 : 13, isBoss ? 17 : isCrawler ? 10 : type === 'runner' || isLeaper ? 12 : 14, 0, 0, Math.PI * 2);
+  ctx.ellipse(
+    0,
+    isCrawler ? -9 : -22,
+    isBoss ? 19 : type === 'brute' || isArmored ? 16 : isScreamer ? 15 : 13,
+    isBoss ? 17 : isCrawler ? 10 : type === 'runner' || isLeaper ? 12 : 14,
+    0,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   if (isScreamer) {
     ctx.strokeStyle = hexrgba(color, 0.9);
@@ -79,11 +126,35 @@ function makeZombieSprite(type, color) {
     ctx.arc(0, -22, 23, -0.55, 0.55);
     ctx.stroke();
   }
-  ctx.fillStyle = isBoss ? '#ffb3c8' : type === 'toxic' ? '#dfff5a' : isLeaper ? '#ffe0a3' : isScreamer ? '#f0d0ff' : '#fff1a6';
+  ctx.fillStyle = isBoss
+    ? '#ffd6df'
+    : type === 'toxic'
+      ? '#e7ff8c'
+      : isLeaper
+        ? '#ffe0a3'
+        : isScreamer
+          ? '#f0d0ff'
+          : isShade
+            ? '#11161d'
+            : '#fff1a6';
   ctx.beginPath();
   ctx.arc(-5, isCrawler ? -10 : -24, isBoss ? 3.2 : 2.3, 0, Math.PI * 2);
   ctx.arc(6, isCrawler ? -10 : -24, isBoss ? 3.2 : 2.3, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(80,0,10,.62)';
+  ctx.lineWidth = isBoss ? 3 : 2;
+  ctx.beginPath();
+  ctx.moveTo(-7, isCrawler ? -2 : -15);
+  ctx.lineTo(8, isCrawler ? 2 : -12);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(210,32,48,.58)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(isCrawler ? -12 : -14, isCrawler ? 8 : 3);
+  ctx.lineTo(isCrawler ? -2 : -5, isCrawler ? 18 : 18);
+  ctx.moveTo(isBoss ? 14 : 10, isCrawler ? 7 : 2);
+  ctx.lineTo(isBoss ? 24 : 16, isCrawler ? 18 : 16);
+  ctx.stroke();
   ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(24,8,10,.7)';
   ctx.lineWidth = 2;
@@ -106,18 +177,19 @@ export function createRenderer(canvas, minimap) {
   const ctx = canvas.getContext('2d', { alpha: false });
   const mini = minimap.getContext('2d');
   const sprites = {
-    walker: makeZombieSprite('walker', '#6bd36b'),
-    runner: makeZombieSprite('runner', '#9dff7a'),
-    crawler: makeZombieSprite('crawler', '#7bdcff'),
-    brute: makeZombieSprite('brute', '#8a6a4a'),
-    toxic: makeZombieSprite('toxic', '#c4ff43'),
-    armored: makeZombieSprite('armored', '#a9b1bc'),
-    leaper: makeZombieSprite('leaper', '#ffb347'),
-    screamer: makeZombieSprite('screamer', '#d88cff'),
-    bloater: makeZombieSprite('bloater', '#ff8f52'),
-    boss: makeZombieSprite('boss', '#ff4d7a'),
+    walker: makeZombieSprite('walker', '#b8b09d'),
+    runner: makeZombieSprite('runner', '#d0b38d'),
+    crawler: makeZombieSprite('crawler', '#7b8b8e'),
+    shade: makeZombieSprite('shade', '#d6eceb'),
+    brute: makeZombieSprite('brute', '#8a5b4a'),
+    toxic: makeZombieSprite('toxic', '#9db64b'),
+    armored: makeZombieSprite('armored', '#8f98a3'),
+    leaper: makeZombieSprite('leaper', '#c88b61'),
+    screamer: makeZombieSprite('screamer', '#b68abf'),
+    bloater: makeZombieSprite('bloater', '#b8694a'),
+    boss: makeZombieSprite('boss', '#d9445f'),
   };
-  const groundMarks = Array.from({ length: 280 }, (_, i) => ({
+  const groundMarks = Array.from({ length: 170 }, (_, i) => ({
     x: (i * 977 + 213) % 3400,
     y: (i * 619 + 89) % 3400,
     r: 8 + ((i * 37) % 34),
@@ -190,53 +262,120 @@ export function createRenderer(canvas, minimap) {
       const sx = o.x - cx;
       const sy = o.y - cy;
       if (sx + o.w < -60 || sx > width + 60 || sy + o.h < -60 || sy > height + 60) continue;
+      const kind = o.kind || 'wall';
       ctx.fillStyle = 'rgba(0,0,0,.28)';
       ctx.fillRect(sx + 5, sy + 6, o.w, o.h);
-      ctx.fillStyle = '#323a42';
+      ctx.fillStyle =
+        {
+          wall: '#323a42',
+          crate: '#4b3f35',
+          gurney: '#596572',
+          generator: '#2f4546',
+          tank: '#4b555e',
+          locker: '#394955',
+        }[kind] || '#323a42';
       ctx.fillRect(sx, sy, o.w, o.h);
-      ctx.fillStyle = '#4d5a66';
+      ctx.fillStyle = kind === 'wall' ? '#4d5a66' : 'rgba(255,255,255,.14)';
       ctx.fillRect(sx, sy, o.w, 5);
       ctx.fillStyle = 'rgba(255,255,255,.08)';
       ctx.fillRect(sx + 6, sy + 8, Math.max(6, o.w - 12), 2);
+      if (kind === 'generator') {
+        ctx.fillStyle = 'rgba(72,240,160,.45)';
+        ctx.fillRect(sx + o.w - 16, sy + 10, 7, Math.max(8, o.h - 20));
+      } else if (kind === 'tank') {
+        ctx.strokeStyle = 'rgba(180,210,220,.32)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(sx + o.w / 2, sy + o.h / 2, o.w * 0.42, o.h * 0.42, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
   }
 
-  function drawBase(base, view, time) {
-    if (!base) return;
-    const sx = base.x - view.x;
-    const sy = base.y - view.y;
-    const r = base.radius || 54;
-    if (sx < -140 || sx > width + 140 || sy < -140 || sy > height + 140) return;
-    const pct = base.maxHp ? Math.max(0, Math.min(1, (base.hp || 0) / base.maxHp)) : 1;
-    const pulse = 1 + Math.sin(time * 0.004) * 0.025;
-    ctx.beginPath();
-    ctx.arc(sx, sy, (r + 28) * pulse, 0, Math.PI * 2);
-    ctx.fillStyle = base.down ? 'rgba(255,80,80,.12)' : 'rgba(72,240,160,.10)';
-    ctx.fill();
-    ctx.strokeStyle = base.down ? 'rgba(255,90,90,.68)' : 'rgba(72,240,160,.52)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = base.down ? '#3a2528' : '#25383a';
-    ctx.strokeStyle = base.down ? '#ff6666' : '#8fffd0';
-    ctx.lineWidth = 3;
-    ctx.fillRect(-r * 0.72, -r * 0.72, r * 1.44, r * 1.44);
-    ctx.strokeRect(-r * 0.72, -r * 0.72, r * 1.44, r * 1.44);
-    ctx.restore();
-    ctx.fillStyle = '#dffaf0';
-    ctx.font = 'bold 12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(base.down ? '重启中' : '避难所', sx, sy + 4);
-    const w = r * 2.2;
-    ctx.fillStyle = 'rgba(0,0,0,.55)';
-    ctx.fillRect(sx - w / 2, sy - r - 28, w, 6);
-    ctx.fillStyle = pct < 0.35 ? '#ff6666' : pct < 0.65 ? '#ffc247' : '#48f0a0';
-    ctx.fillRect(sx - w / 2, sy - r - 28, w * pct, 6);
+  function drawFeatures(features, view, time) {
+    const { x: cx, y: cy } = view;
+    for (const f of features || []) {
+      const sx = f.x - cx;
+      const sy = f.y - cy;
+      const w = f.w || 44;
+      const h = f.h || 28;
+      if (sx + w < -80 || sx > width + 80 || sy + h < -80 || sy > height + 80) continue;
+      if (f.kind === 'room') {
+        const effect = f.effect || '';
+        const tint =
+          {
+            medbay: '72,240,160',
+            generator: '102,217,255',
+            lab: '183,255,71',
+            armory: '255,194,71',
+          }[effect] || '220,231,241';
+        ctx.fillStyle = `rgba(${tint},.045)`;
+        ctx.fillRect(sx, sy, w, h);
+        ctx.strokeStyle = `rgba(${tint},.18)`;
+        ctx.strokeRect(sx, sy, w, h);
+        ctx.fillStyle = `rgba(${tint},.12)`;
+        if (effect === 'medbay') {
+          for (let i = 0; i < 2; i += 1) {
+            ctx.fillRect(sx + 22 + i * 78, sy + h * 0.42, 48, 18);
+            ctx.fillStyle = 'rgba(240,248,255,.18)';
+            ctx.fillRect(sx + 26 + i * 78, sy + h * 0.42 - 8, 18, 8);
+            ctx.fillStyle = `rgba(${tint},.12)`;
+          }
+        } else if (effect === 'generator') {
+          ctx.fillRect(sx + w * 0.5 - 28, sy + h * 0.38, 56, 44);
+          ctx.fillStyle = `rgba(${tint},${f.active === false ? 0.18 : 0.42})`;
+          ctx.fillRect(sx + w * 0.5 + 18, sy + h * 0.38 + 8, 8, 28);
+        } else if (effect === 'lab') {
+          for (let i = 0; i < 4; i += 1) {
+            ctx.strokeStyle = `rgba(${tint},.28)`;
+            ctx.strokeRect(sx + 22 + i * 42, sy + h * 0.38, 18, 42);
+            ctx.fillStyle = `rgba(${tint},.16)`;
+            ctx.fillRect(sx + 26 + i * 42, sy + h * 0.52, 10, 20);
+          }
+        } else if (effect === 'armory') {
+          for (let i = 0; i < 3; i += 1) {
+            ctx.fillRect(sx + 22 + i * 48, sy + h * 0.46, 34, 24);
+            ctx.strokeStyle = 'rgba(20,16,8,.45)';
+            ctx.strokeRect(sx + 22 + i * 48, sy + h * 0.46, 34, 24);
+          }
+        }
+        if (f.label) {
+          ctx.fillStyle = `rgba(${tint},.55)`;
+          ctx.font = 'bold 12px Arial';
+          ctx.textAlign = 'left';
+          ctx.fillText(f.label, sx + 10, sy + 18);
+        }
+      } else if (f.kind === 'blood') {
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, w * 0.52, h * 0.48, (f.x + f.y) * 0.01, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(120,8,20,.42)';
+        ctx.fill();
+      } else if (f.kind === 'pool') {
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, w * 0.5, h * 0.48, 0.3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(100,142,68,.18)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(157,182,75,.16)';
+        ctx.stroke();
+      } else if (f.kind === 'light') {
+        const blink = 0.15 + Math.max(0, Math.sin(time * 0.008 + f.x)) * 0.18;
+        const grad = ctx.createRadialGradient(sx, sy, 4, sx, sy, Math.max(w, h));
+        grad.addColorStop(0, `rgba(255,77,95,${blink})`);
+        grad.addColorStop(1, 'rgba(255,77,95,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(sx - w, sy - h, w * 2, h * 2);
+      } else if (f.kind === 'warning') {
+        ctx.strokeStyle = 'rgba(255,194,71,.22)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(sx - w / 2, sy);
+        ctx.lineTo(sx + w / 2, sy);
+        ctx.stroke();
+      }
+    }
   }
 
-  function drawMission(mission, view, time) {
+  function drawMission(mission, view, time, index = 0) {
     if (!mission || mission.done || !mission.visible) return;
     const sx = mission.x - view.x;
     const sy = mission.y - view.y;
@@ -244,14 +383,16 @@ export function createRenderer(canvas, minimap) {
     if (sx < -150 || sx > width + 150 || sy < -150 || sy > height + 150) return;
     const charge = Math.max(0, Math.min(1, mission.charge || 0));
     const color = mission.ready ? '#48f0a0' : mission.color || '#ff4d5f';
+    const marker = String(index + 1);
+    const reward = mission.shortReward || mission.rewardTitle || '';
     const pulse = 1 + Math.sin(time * 0.006) * 0.035;
     ctx.beginPath();
     ctx.arc(sx, sy, r * pulse, 0, Math.PI * 2);
-    ctx.fillStyle = mission.ready ? 'rgba(72,240,160,.10)' : 'rgba(255,77,95,.10)';
+    ctx.fillStyle = mission.ready ? 'rgba(72,240,160,.08)' : 'rgba(255,77,95,.075)';
     ctx.fill();
-    ctx.strokeStyle = hexrgba(color, 0.68);
+    ctx.strokeStyle = hexrgba(color, 0.48);
     ctx.lineWidth = 2;
-    ctx.setLineDash([10, 8]);
+    ctx.setLineDash([14, 10]);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.beginPath();
@@ -259,15 +400,75 @@ export function createRenderer(canvas, minimap) {
     ctx.strokeStyle = color;
     ctx.lineWidth = 5;
     ctx.stroke();
-    ctx.fillStyle = mission.ready ? '#dcfff1' : '#ffdce1';
-    ctx.font = 'bold 12px Arial';
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.fillStyle = 'rgba(0,0,0,.44)';
+    ctx.fillRect(-34, -29, 68, 58);
+    ctx.fillStyle = mission.ready ? '#203c32' : '#3a2228';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.fillRect(-28, -34, 56, 68);
+    ctx.strokeRect(-28, -34, 56, 68);
+    ctx.fillStyle = '#11161d';
+    ctx.fillRect(-19, -23, 38, 46);
+    ctx.fillStyle = mission.ready ? '#48f0a0' : '#ff4d5f';
+    ctx.fillRect(-14, -18, 28, 6);
+    ctx.fillRect(-14, -6, 28 * Math.max(0.16, charge), 5);
+    ctx.fillRect(-14, 7, 19, 5);
+    ctx.beginPath();
+    ctx.arc(-25, -35, 15, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#07110c';
+    ctx.font = '900 16px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(mission.name || '撤离点', sx, sy + 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(marker, -25, -35);
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-42, 32);
+    ctx.lineTo(-24, 18);
+    ctx.moveTo(42, 32);
+    ctx.lineTo(24, 18);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = mission.ready ? '#dcfff1' : '#ffdce1';
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const title = `${marker}. ${mission.name || '撤离点'}`;
+    const titleWidth = Math.min(170, Math.max(84, ctx.measureText(title).width + 18));
+    ctx.fillStyle = 'rgba(2,4,7,.68)';
+    ctx.strokeStyle = hexrgba(color, 0.45);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(sx - titleWidth / 2, sy + r + 8, titleWidth, 24, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = mission.ready ? '#dcfff1' : '#ffdce1';
+    ctx.fillText(title, sx, sy + r + 20);
+    if (reward) {
+      const rewardText = `奖励:${reward}`;
+      const rewardWidth = Math.min(150, Math.max(64, ctx.measureText(rewardText).width + 16));
+      ctx.fillStyle = hexrgba(color, mission.ready ? 0.2 : 0.16);
+      ctx.strokeStyle = hexrgba(color, 0.38);
+      ctx.beginPath();
+      ctx.roundRect(sx - rewardWidth / 2, sy + r + 36, rewardWidth, 21, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#edf7ff';
+      ctx.font = 'bold 12px Arial';
+      ctx.fillText(rewardText, sx, sy + r + 46);
+    }
   }
 
   function drawExits(exits, mission, view, time) {
-    const list = exits && exits.length ? exits : (mission ? [mission] : []);
-    for (const exit of list) drawMission(exit, view, time);
+    const list = exits && exits.length ? exits : mission ? [mission] : [];
+    for (let i = 0; i < list.length; i += 1) drawMission(list[i], view, time, i);
   }
 
   function drawItems(items, view, time) {
@@ -277,22 +478,100 @@ export function createRenderer(canvas, minimap) {
       const sy = item.y - cy;
       if (sx < -45 || sx > width + 45 || sy < -45 || sy > height + 45) continue;
       const pulse = 1 + Math.sin(time * 0.004) * 0.08;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.shadowColor = hexrgba(item.color, 0.55);
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = hexrgba(item.color, 0.14);
       ctx.beginPath();
-      ctx.arc(sx, sy, (item.radius + 9) * pulse, 0, Math.PI * 2);
-      ctx.fillStyle = hexrgba(item.color, 0.16);
+      ctx.roundRect(
+        -(item.radius + 12) * pulse,
+        -(item.radius + 8) * pulse,
+        (item.radius + 12) * 2 * pulse,
+        (item.radius + 8) * 2 * pulse,
+        6,
+      );
       ctx.fill();
-      ctx.beginPath();
-      ctx.arc(sx, sy, item.radius, 0, Math.PI * 2);
-      ctx.fillStyle = item.color;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,.88)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = '#111';
+      ctx.shadowBlur = 0;
+      if (item.type === 'fuse') {
+        ctx.fillStyle = '#202833';
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = 3;
+        ctx.fillRect(-17, -7, 34, 14);
+        ctx.strokeRect(-17, -7, 34, 14);
+        ctx.strokeStyle = '#dce7f1';
+        ctx.beginPath();
+        ctx.moveTo(-22, 0);
+        ctx.lineTo(-17, 0);
+        ctx.moveTo(17, 0);
+        ctx.lineTo(22, 0);
+        ctx.stroke();
+      } else if (item.type === 'sample') {
+        ctx.fillStyle = '#151b22';
+        ctx.strokeStyle = '#dce7f1';
+        ctx.lineWidth = 2;
+        ctx.fillRect(-8, -18, 16, 34);
+        ctx.strokeRect(-8, -18, 16, 34);
+        ctx.fillStyle = item.color;
+        ctx.fillRect(-5, -2, 10, 15);
+      } else if (item.type === 'keycard') {
+        ctx.fillStyle = item.color;
+        ctx.beginPath();
+        ctx.roundRect(-18, -12, 36, 24, 4);
+        ctx.fill();
+        ctx.fillStyle = '#151b22';
+        ctx.fillRect(-12, -5, 14, 4);
+        ctx.fillRect(-12, 4, 24, 3);
+      } else if ((item.type || '').startsWith('weapon_')) {
+        ctx.fillStyle = '#202833';
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-24, -15, 48, 30, 5);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = '#edf7ff';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-13, 2);
+        ctx.lineTo(12, -3);
+        ctx.moveTo(9, -3);
+        ctx.lineTo(18, -2);
+        ctx.stroke();
+      } else if (item.type === 'vehicle') {
+        ctx.fillStyle = '#2d2b24';
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = 3;
+        ctx.fillRect(-22, -12, 44, 20);
+        ctx.strokeRect(-22, -12, 44, 20);
+        ctx.strokeStyle = '#edf7ff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-18, -15);
+        ctx.lineTo(18, -15);
+        ctx.stroke();
+        ctx.fillStyle = '#11161d';
+        ctx.beginPath();
+        ctx.arc(-13, 12, 5, 0, Math.PI * 2);
+        ctx.arc(13, 12, 5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, item.radius, 0, Math.PI * 2);
+        ctx.fillStyle = item.color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.88)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.fillStyle = item.type === 'sample' ? '#dce7f1' : '#111';
       ctx.font = 'bold 12px Arial';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(item.icon, sx, sy);
+      if (!['fuse', 'sample', 'keycard', 'vehicle'].includes(item.type) && !(item.type || '').startsWith('weapon_'))
+        ctx.fillText(item.icon, 0, 0);
+      ctx.restore();
     }
   }
 
@@ -305,18 +584,34 @@ export function createRenderer(canvas, minimap) {
       if (sx < -70 || sx > width + 70 || sy < -70 || sy > height + 70) continue;
       const len = Math.min(34, Math.hypot(bullet.vx, bullet.vy) * 0.035);
       const angle = Math.atan2(bullet.vy, bullet.vx);
-      ctx.strokeStyle = hexrgba(bullet.color, 0.3);
-      ctx.lineWidth = 7;
+      const prevX = Number.isFinite(bullet.prevX) ? bullet.prevX : bullet.x - Math.cos(angle) * len;
+      const prevY = Number.isFinite(bullet.prevY) ? bullet.prevY : bullet.y - Math.sin(angle) * len;
+      const prevDist = Math.hypot(bullet.x - prevX, bullet.y - prevY);
+      const usePrevTail = prevDist > 1 && prevDist < 140;
+      const tailX = usePrevTail ? prevX - cx : sx - Math.cos(angle) * len;
+      const tailY = usePrevTail ? prevY - cy : sy - Math.sin(angle) * len;
+      const explosive = (bullet.explosionRadius || 0) > 0 || bullet.weapon === 'launcher';
+      ctx.strokeStyle = hexrgba(bullet.color, explosive ? 0.42 : 0.3);
+      ctx.lineWidth = explosive ? 11 : 7;
       ctx.beginPath();
-      ctx.moveTo(sx - Math.cos(angle) * len, sy - Math.sin(angle) * len);
+      ctx.moveTo(tailX, tailY);
       ctx.lineTo(sx, sy);
       ctx.stroke();
-      ctx.strokeStyle = '#fff6bd';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = explosive ? '#ffd6a0' : '#fff6bd';
+      ctx.lineWidth = explosive ? 4 : 2;
       ctx.beginPath();
-      ctx.moveTo(sx - Math.cos(angle) * len * 0.55, sy - Math.sin(angle) * len * 0.55);
+      ctx.moveTo(
+        usePrevTail ? tailX : sx - Math.cos(angle) * len * 0.55,
+        usePrevTail ? tailY : sy - Math.sin(angle) * len * 0.55,
+      );
       ctx.lineTo(sx, sy);
       ctx.stroke();
+      if (explosive) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(5, bullet.radius || 5), 0, Math.PI * 2);
+        ctx.fillStyle = bullet.color || '#ff8844';
+        ctx.fill();
+      }
     }
   }
 
@@ -350,10 +645,37 @@ export function createRenderer(canvas, minimap) {
   function drawPlayerBody(p, sx, sy, isMe, time) {
     const color = p.color || '#4da3ff';
     const angle = p.aim || 0;
+    const weapon = p.weapon || 'pistol';
+    const spec = weaponVisual(weapon);
+    const weaponColor =
+      {
+        pistol: '#d9e7f2',
+        rifle: '#8fd0ff',
+        shotgun: '#ffc247',
+        smg: '#48f0a0',
+        launcher: '#ff8844',
+      }[weapon] || '#d9e7f2';
     ctx.beginPath();
     ctx.ellipse(sx + 3, sy + 5, 19, 10, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,.24)';
     ctx.fill();
+    if (p.vehicle) {
+      ctx.save();
+      ctx.translate(sx, sy + 15);
+      ctx.fillStyle = 'rgba(255,194,71,.16)';
+      ctx.strokeStyle = 'rgba(255,194,71,.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(-29, -11, 58, 24, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#11161d';
+      ctx.beginPath();
+      ctx.arc(-18, 14, 4, 0, Math.PI * 2);
+      ctx.arc(18, 14, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     if (p.prot) {
       ctx.beginPath();
       ctx.arc(sx, sy, 31 + Math.sin(time * 0.006) * 2, 0, Math.PI * 2);
@@ -364,19 +686,40 @@ export function createRenderer(canvas, minimap) {
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(angle);
-    ctx.strokeStyle = '#d9e7f2';
-    ctx.lineWidth = 6;
+    ctx.strokeStyle = weaponColor;
+    ctx.lineWidth = spec.width;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(8, 1);
-    ctx.lineTo(28, 1);
+    ctx.moveTo(10, 0);
+    ctx.lineTo(spec.barrel, 0);
     ctx.stroke();
     ctx.strokeStyle = '#26313b';
-    ctx.lineWidth = 9;
+    ctx.lineWidth = weapon === 'launcher' ? 12 : 9;
     ctx.beginPath();
     ctx.moveTo(2, 0);
-    ctx.lineTo(18, 0);
+    ctx.lineTo(spec.core, 0);
     ctx.stroke();
+    if (weapon === 'shotgun') {
+      ctx.strokeStyle = '#1a2028';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(18, -4);
+      ctx.lineTo(35, -4);
+      ctx.moveTo(18, 4);
+      ctx.lineTo(35, 4);
+      ctx.stroke();
+    } else if (weapon === 'launcher') {
+      ctx.fillStyle = '#151b22';
+      ctx.beginPath();
+      ctx.ellipse(spec.muzzle - 8, 0, 8, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if ((p.fireCd || 0) > 0 && !(p.reloadCd > 0)) {
+      ctx.fillStyle = 'rgba(255,236,170,.86)';
+      ctx.beginPath();
+      ctx.ellipse(spec.muzzle, 0, weapon === 'launcher' ? 10 : 7, 3.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
     ctx.beginPath();
     ctx.arc(sx, sy, isMe ? 18 : 16, 0, Math.PI * 2);
@@ -385,12 +728,25 @@ export function createRenderer(canvas, minimap) {
     ctx.strokeStyle = isMe ? '#fff' : 'rgba(255,255,255,.62)';
     ctx.lineWidth = isMe ? 3 : 2;
     ctx.stroke();
-    const hpPct = Math.max(0, Math.min(1, (p.hp || 0) / 100));
+    const hpPct = Math.max(0, Math.min(1, (p.hp || 0) / (p.maxHp || 100)));
     ctx.strokeStyle = hpPct > 0.45 ? '#48f0a0' : '#ff5b61';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(sx, sy, 24, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * hpPct);
     ctx.stroke();
+    if ((p.reloadCd || 0) > 0) {
+      ctx.strokeStyle = '#dce7f1';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(
+        sx,
+        sy,
+        29,
+        -Math.PI / 2,
+        -Math.PI / 2 + Math.PI * 2 * Math.max(0.08, 1 - Math.min(1, p.reloadCd / 1.15)),
+      );
+      ctx.stroke();
+    }
     ctx.fillStyle = '#edf7ff';
     ctx.font = 'bold 12px Arial';
     ctx.textAlign = 'center';
@@ -442,9 +798,32 @@ export function createRenderer(canvas, minimap) {
       const sy = p.y - cy;
       const a = Math.max(0, p.life / p.maxLife);
       ctx.globalAlpha = a;
-      if (p.line) {
+      if (p.slash) {
+        const radius = p.radius || 72;
+        const arc = p.arc || 1.25;
+        const angle = p.angle || 0;
+        const sweep = arc * (1.05 - a * 0.15);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(angle);
+        ctx.lineCap = 'round';
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 16;
+        ctx.strokeStyle = 'rgba(245,250,255,.92)';
+        ctx.lineWidth = (p.width || 10) * a;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, -sweep / 2, sweep / 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = hexrgba(p.color, 0.72 * a);
+        ctx.lineWidth = Math.max(2, (p.width || 10) * 0.35 * a);
+        ctx.beginPath();
+        ctx.arc(0, 0, radius - 8, -sweep / 2, sweep / 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (p.line) {
         ctx.strokeStyle = p.color;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = p.size || 2;
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(sx + p.dx, sy + p.dy);
@@ -461,12 +840,54 @@ export function createRenderer(canvas, minimap) {
 
   function drawHorrorOverlay(time) {
     const flicker = 0.03 + Math.sin(time * 0.019) * 0.012;
-    const grad = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.18, width / 2, height / 2, Math.max(width, height) * 0.72);
+    const grad = ctx.createRadialGradient(
+      width / 2,
+      height / 2,
+      Math.min(width, height) * 0.18,
+      width / 2,
+      height / 2,
+      Math.max(width, height) * 0.72,
+    );
     grad.addColorStop(0, 'rgba(0,0,0,0)');
     grad.addColorStop(0.72, `rgba(0,0,0,${0.28 + flicker})`);
     grad.addColorStop(1, `rgba(0,0,0,${0.72 + flicker})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
+  }
+
+  function drawFogOverlay(fog, time) {
+    if (!fog || !fog.until) return;
+    const left = Math.max(0, fog.until - time);
+    if (left <= 0) return;
+    const duration = Math.max(1000, (fog.duration || 4.8) * 1000);
+    const pct = Math.min(1, left / duration);
+    const intro = Math.min(1, (duration - left) / 520);
+    const fade = Math.min(1, pct / 0.28);
+    const intensity = Math.min(1, intro, fade);
+    const sweep = Math.sin(time * 0.012) * 0.06;
+    const color = fog.color || '#d6eceb';
+    const alert = fog.reason === 'extraction' || fog.reason === 'terminal';
+    const pulse = alert ? Math.max(0, Math.sin(time * 0.028)) * 0.08 : 0;
+    ctx.fillStyle = hexrgba(color, (0.16 + pulse) * intensity);
+    ctx.fillRect(0, 0, width, height);
+    const grad = ctx.createRadialGradient(
+      width / 2,
+      height / 2,
+      Math.min(width, height) * 0.12,
+      width / 2,
+      height / 2,
+      Math.max(width, height) * 0.78,
+    );
+    grad.addColorStop(0, hexrgba(color, 0.06 * intensity));
+    grad.addColorStop(0.55, hexrgba(color, (0.24 + sweep + pulse) * intensity));
+    grad.addColorStop(1, `rgba(8,10,12,${(0.78 + pulse) * intensity})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+    for (let i = 0; i < 8; i += 1) {
+      const y = ((time * (0.018 + i * 0.002) + i * 97) % (height + 160)) - 80;
+      ctx.fillStyle = hexrgba(color, (0.034 + (i % 3) * 0.012 + pulse * 0.4) * intensity);
+      ctx.fillRect(-80, y, width + 160, 18 + (i % 4) * 9);
+    }
   }
 
   function drawMinimap(state, me, myId, view, mapW, mapH) {
@@ -476,13 +897,27 @@ export function createRenderer(canvas, minimap) {
     const sy = mh / mapH;
     mini.fillStyle = '#11161d';
     mini.fillRect(0, 0, mw, mh);
-    const exits = state.exits && state.exits.length ? state.exits : (state.mission ? [state.mission] : []);
-    for (const exit of exits) {
+    const exits = state.exits && state.exits.length ? state.exits : state.mission ? [state.mission] : [];
+    for (let i = 0; i < exits.length; i += 1) {
+      const exit = exits[i];
       if (!exit.visible || exit.done) continue;
-      mini.strokeStyle = exit.ready ? '#48f0a0' : (exit.color || '#ff4d5f');
+      const color = exit.ready ? '#48f0a0' : exit.color || '#ff4d5f';
+      const x = exit.x * sx;
+      const y = exit.y * sy;
+      mini.fillStyle = hexrgba(color, 0.28);
       mini.beginPath();
-      mini.arc(exit.x * sx, exit.y * sy, 4, 0, Math.PI * 2);
+      mini.arc(x, y, 7, 0, Math.PI * 2);
+      mini.fill();
+      mini.strokeStyle = color;
+      mini.lineWidth = 1.5;
+      mini.beginPath();
+      mini.arc(x, y, 7, 0, Math.PI * 2);
       mini.stroke();
+      mini.fillStyle = '#edf7ff';
+      mini.font = '900 9px Arial';
+      mini.textAlign = 'center';
+      mini.textBaseline = 'middle';
+      mini.fillText(String(i + 1), x, y + 0.5);
     }
     for (const z of Object.values(state.z)) {
       mini.fillStyle = z.color || '#6bd36b';
@@ -502,7 +937,7 @@ export function createRenderer(canvas, minimap) {
     mini.strokeRect(view.x * sx, view.y * sy, width * sx, height * sy);
   }
 
-  function draw(state, me, myId, visualMe, view, effects, time, joined) {
+  function draw(state, me, myId, visualMe, view, effects, time, joined, options = {}) {
     clear();
     if (!joined) {
       ctx.fillStyle = '#44ffaa';
@@ -515,6 +950,7 @@ export function createRenderer(canvas, minimap) {
       return;
     }
     drawGround(view, state.mw, state.mh);
+    drawFeatures(state.features, view, time);
     drawObstacles(state.obs, view);
     drawExits(state.exits, state.mission, view, time);
     drawEffects({ decals: effects.decals, rings: [], particles: [] }, view);
@@ -523,8 +959,9 @@ export function createRenderer(canvas, minimap) {
     drawZombies(state.z, view, time);
     drawEffects({ decals: [], rings: effects.rings, particles: effects.particles }, view);
     drawPlayers(state.pl, me, myId, visualMe, view, time);
+    drawFogOverlay(state.fog, time);
     drawHorrorOverlay(time);
-    drawMinimap(state, me, myId, view, state.mw, state.mh);
+    if (options.drawMinimap !== false) drawMinimap(state, me, myId, view, state.mw, state.mh);
   }
 
   resize();

@@ -169,6 +169,23 @@ async def on_client_ping(sid, data):
     )
 
 
+@sio.on("continue_stage")
+async def on_continue_stage(sid, data):
+    async with _game_lock:
+        G.continue_intermission(sid)
+        events = drain_events()
+    await emit_events(events)
+
+
+@sio.on("buy_talent")
+async def on_buy_talent(sid, data):
+    data = data or {}
+    async with _game_lock:
+        G.buy_talent(sid, data.get("talent"))
+        events = drain_events()
+    await emit_events(events)
+
+
 @sio.on("restart_game")
 async def on_restart(sid, data):
     await start_background_tasks()

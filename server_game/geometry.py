@@ -65,11 +65,15 @@ def normalize_input(data):
         seq = int(data.get("seq", 0))
     except (TypeError, ValueError):
         seq = 0
+    weapon = str(data.get("weapon") or "").strip().lower()
     return {
         "keys": keys,
         "aim_angle": aim,
         "shooting": bool(data.get("shooting")),
+        "fire": bool(data.get("fire")),
         "dash": bool(data.get("dash")),
+        "reload": bool(data.get("reload")),
+        "paused": bool(data.get("paused")),
+        "weapon": weapon,
         "seq": max(0, seq),
     }
-
