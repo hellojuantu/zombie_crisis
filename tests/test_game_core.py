@@ -17,13 +17,14 @@ from server_game.config import (
     MOVE_ACCEL,
     MOVE_DECEL,
     PLAYER_MAX_HP,
+    PLAYER_STAGE_LIVES,
     PLAYER_R,
     PLAYER_STALE_TIMEOUT,
     PROTOCOL_VERSION,
     RELOAD_SECONDS,
     SERVER_DT,
-    MAX_RESERVE_AMMO,
-    START_RESERVE_AMMO,
+    MAX_RESERVE_BY_TYPE,
+    START_AMMO_RESERVE,
     VEHICLE_SPEED_MULT,
     WEAPON_TYPES,
     ZOMBIE_TYPES,
@@ -249,7 +250,8 @@ class GameCoreTest(unittest.TestCase):
         game, events = self.make_game()
         player = game.players["p1"]
         player["ammo"] = 0
-        player["reserve_ammo"] = 0
+        player["ammo_reserve"]["pistol"] = 0
+        player["current_reserve"] = 0
         game.zombies[1] = self.zombie(1, 1052, 1000, hp=20)
 
         game.handle_input("p1", {"seq": 1, "aim_angle": 0, "fire": True})
@@ -314,7 +316,8 @@ class GameCoreTest(unittest.TestCase):
         game, events = self.make_game()
         player = game.players["p1"]
         player["ammo"] = 1
-        player["reserve_ammo"] = 12
+        player["ammo_reserve"]["pistol"] = 12
+        player["current_reserve"] = 12
 
         game.handle_input("p1", {"seq": 1, "aim_angle": 0, "shooting": True})
         self.tick_once(game)
@@ -324,9 +327,41 @@ class GameCoreTest(unittest.TestCase):
         game.tick(SERVER_DT, now=player["reload_until"] + RELOAD_SECONDS)
 
         self.assertEqual(player["ammo"], 12)
-        self.assertEqual(player["reserve_ammo"], 0)
+        self.assertEqual(player["ammo_reserve"]["pistol"], 0)
+        self.assertEqual(player["current_reserve"], 0)
         self.assertTrue(any(ev == "reload_start" for ev, _ in events))
         self.assertTrue(any(ev == "reload_done" for ev, _ in events))
+
+    def test_weapon_reserve_pools_are_split_by_ammo_type(self):
+        game, _ = self.make_game()
+        player = game.players["p1"]
+        now = game._now()
+        start_pistol = player["ammo_reserve"]["pistol"]
+        game._unlock_weapon(player, "rifle", now, notify=False)
+
+        self.assertEqual(player["ammo_reserve"]["pistol"], start_pistol)
+        self.assertGreater(player["ammo_reserve"]["rifle"], 0)
+
+        game._switch_weapon("p1", player, "rifle", now, notify=False)
+        player["ammo"] = 0
+        game._try_reload("p1", player, now, manual=True)
+        game.tick(SERVER_DT, now=player["reload_until"] + RELOAD_SECONDS)
+
+        self.assertEqual(player["weapon_id"], "rifle")
+        self.assertGreater(player["ammo"], 0)
+        self.assertEqual(player["ammo_reserve"]["pistol"], start_pistol)
+        self.assertLess(player["ammo_reserve"]["rifle"], WEAPON_TYPES["rifle"]["unlock_reserve"])
+
+    def test_launcher_has_two_round_mag_and_separate_explosive_ammo(self):
+        game, _ = self.make_game()
+        player = game.players["p1"]
+        now = game._now()
+        game._unlock_weapon(player, "launcher", now, notify=False)
+        game._switch_weapon("p1", player, "launcher", now, notify=False)
+
+        self.assertEqual(player["mag_size"], 2)
+        self.assertEqual(player["ammo"], 2)
+        self.assertEqual(player["ammo_reserve"]["explosive"], 0)
 
     def test_weapon_switch_to_rifle_uses_rifle_stats(self):
         game, events = self.make_game()
@@ -378,8 +413,8 @@ class GameCoreTest(unittest.TestCase):
     def test_launcher_explosion_damages_group(self):
         game, events = self.make_game()
         now = game._now()
-        game.zombies[1] = self.zombie(1, 1030, 1000, hp=30)
-        game.zombies[2] = self.zombie(2, 1120, 1000, hp=30)
+        game.zombies[1] = self.zombie(1, 1030, 1000, hp=18)
+        game.zombies[2] = self.zombie(2, 1120, 1000, hp=18)
         game.zombies[3] = self.zombie(3, 1380, 1000, hp=30)
 
         game._explode_projectile({
@@ -396,6 +431,42 @@ class GameCoreTest(unittest.TestCase):
         self.assertNotIn(2, game.zombies)
         self.assertIn(3, game.zombies)
         self.assertTrue(any(ev == "grenade_explode" for ev, _ in events))
+
+    def test_boss_resists_launcher_blast_and_enters_phase(self):
+        game, events = self.make_game()
+        now = game._now()
+        game.wave = 3
+        game.zombies[1] = self.zombie(1, 1000, 1000, hp=700, ztype="boss")
+        game.zombies[1]["max_hp"] = 1000
+
+        game._explode_projectile({
+            "owner": "p1",
+            "x": 1000,
+            "y": 1000,
+            "damage": 22,
+            "explosion_radius": WEAPON_TYPES["launcher"]["explosion_radius"],
+            "explosion_damage": WEAPON_TYPES["launcher"]["explosion_damage"],
+            "boss_damage_mult": WEAPON_TYPES["launcher"]["boss_damage_mult"],
+            "color": "#ff8844",
+        }, now)
+        game._maybe_boss_phase(1, game.zombies[1], now + SERVER_DT)
+
+        self.assertIn(1, game.zombies)
+        self.assertGreater(game.zombies[1]["hp"], 650)
+        self.assertTrue(any(ev == "boss_phase" and data["phase"] == 1 for ev, data in events))
+
+    def test_spitter_ranged_attack_punishes_straight_kiting(self):
+        game, events = self.make_game()
+        now = game._now()
+        player = game.players["p1"]
+        player["protect_until"] = 0
+        player["shield_until"] = 0
+        game.zombies[1] = self.zombie(1, 660, 1000, hp=80, ztype="spitter")
+
+        game.tick(SERVER_DT, now=now)
+
+        self.assertLess(player["hp"], PLAYER_MAX_HP)
+        self.assertTrue(any(ev == "z_spit" for ev, _ in events))
 
     def test_facility_rooms_apply_gameplay_effects(self):
         game, events = self.make_game()
@@ -506,7 +577,13 @@ class GameCoreTest(unittest.TestCase):
         self.assertIn("tick", snap)
         self.assertIn("time", snap)
         self.assertEqual(snap["p"]["p1"][14], 3)
-        self.assertEqual(len(snap["p"]["p1"]), 36)
+        player_tuple = snap["p"]["p1"]
+        self.assertEqual(len(player_tuple), 43)
+        self.assertEqual(player_tuple[24], START_AMMO_RESERVE["pistol"])
+        self.assertIn("pistol:", player_tuple[36])
+        self.assertEqual(player_tuple[37], "pistol")
+        self.assertEqual(player_tuple[39], PLAYER_STAGE_LIVES)
+        self.assertEqual(player_tuple[41], "main")
         self.assertIn("perf", snap)
         self.assertIn("tick_ms", snap["perf"])
         self.assertIn("lb", snap)
@@ -550,7 +627,10 @@ class GameCoreTest(unittest.TestCase):
         self.assertIn("vehicleSpeedMult", init["cfg"])
         self.assertEqual(init["cfg"]["weaponTypes"]["pistol"]["mag_size"], MAG_SIZE)
         self.assertEqual(game.players["p1"]["ammo"], MAG_SIZE)
-        self.assertEqual(game.players["p1"]["reserve_ammo"], START_RESERVE_AMMO)
+        self.assertEqual(game.players["p1"]["current_reserve"], START_AMMO_RESERVE["pistol"])
+        self.assertEqual(game.players["p1"]["ammo_reserve"]["pistol"], START_AMMO_RESERVE["pistol"])
+        self.assertIn("maxReserveByType", init["cfg"])
+        self.assertIn("ammoTypeLabels", init["cfg"])
 
     def test_facility_layout_is_not_fixed_square_maze(self):
         game = Game()
@@ -567,6 +647,66 @@ class GameCoreTest(unittest.TestCase):
         self.assertGreater(len(init["features"]), 3)
         self.assertIn("stage", init)
         self.assertIn("stageTitle", init["obj"])
+
+    def test_entering_facility_switches_to_indoor_scene_and_returns(self):
+        game, events = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("kind") == "room")
+        player = game.players["p1"]
+        player["x"] = room["x"] + room["w"] / 2
+        player["y"] = room["y"] + room["h"] / 2
+
+        game._apply_facility_effects(SERVER_DT, now)
+
+        scene_id = player["scene"]
+        self.assertTrue(scene_id.startswith("room:"))
+        self.assertEqual(player["room_id"], room["id"])
+        self.assertTrue(any(ev == "scene_change" and data["reason"] == "enter_room" for ev, data in events))
+        snap = game.get_snapshot("p1")
+        self.assertEqual(snap["scene"], scene_id)
+        self.assertEqual(snap["sceneName"], room["label"])
+        self.assertLess(snap["mw"], 3000)
+
+        scene = game.room_scenes[scene_id]
+        player["x"] = scene["exit"]["x"]
+        player["y"] = scene["exit"]["y"]
+        game._apply_facility_effects(SERVER_DT, now + 1.0)
+
+        self.assertEqual(player["scene"], "main")
+        self.assertEqual(player["room_id"], "")
+        self.assertTrue(any(ev == "scene_change" and data["reason"] == "leave_room" for ev, data in events))
+
+    def test_indoor_scene_entities_are_isolated_and_zombies_move(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("kind") == "room")
+        player = game.players["p1"]
+        player["x"] = room["x"] + room["w"] / 2
+        player["y"] = room["y"] + room["h"] / 2
+        game._apply_facility_effects(SERVER_DT, now)
+        scene_id = player["scene"]
+
+        main_zid = game.spawn_zombie(x=player.get("main_x", 1000), y=player.get("main_y", 1000), ztype="walker", scene="main")
+        room_zid = game.spawn_zombie(x=player["x"] + 360, y=player["y"], ztype="runner", scene=scene_id)
+        main_item = game.spawn_item(x=player.get("main_x", 1000), y=player.get("main_y", 1000), item_type="parts", scene="main")
+        room_item = game.spawn_item(x=500, y=500, item_type="parts", scene=scene_id)
+
+        self.assertIsNotNone(main_zid)
+        self.assertIsNotNone(room_zid)
+        self.assertIsNotNone(main_item)
+        self.assertIsNotNone(room_item)
+
+        snap = game.get_snapshot("p1")
+
+        self.assertIn(room_zid, snap["z"])
+        self.assertNotIn(main_zid, snap["z"])
+        self.assertIn(room_item, snap["i"])
+        self.assertNotIn(main_item, snap["i"])
+
+        old_x = game.zombies[room_zid]["x"]
+        game._update_zombies(SERVER_DT, now + SERVER_DT)
+
+        self.assertLess(game.zombies[room_zid]["x"], old_x)
 
     def test_bullet_damages_and_kills_zombie(self):
         game, events = self.make_game()
@@ -805,7 +945,8 @@ class GameCoreTest(unittest.TestCase):
         game, events = self.make_game()
         now = game._now()
         player = game.players["p1"]
-        player["reserve_ammo"] = 10
+        player["ammo_reserve"]["pistol"] = 10
+        game._sync_weapon_fields(player)
         exit_point = {
             "id": "service-reward",
             "type": "service",
@@ -826,10 +967,14 @@ class GameCoreTest(unittest.TestCase):
 
         game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
 
-        self.assertGreater(player["reserve_ammo"], 10)
-        self.assertLessEqual(player["reserve_ammo"], MAX_RESERVE_AMMO)
+        self.assertGreater(player["ammo_reserve"]["pistol"], 10)
+        self.assertGreater(player["ammo_reserve"]["rifle"], 0)
+        self.assertGreater(player["ammo_reserve"]["smg"], 0)
+        self.assertGreater(player["ammo_reserve"]["shell"], 0)
+        self.assertLessEqual(player["ammo_reserve"]["pistol"], MAX_RESERVE_BY_TYPE["pistol"])
         complete = [data for ev, data in events if ev == "mission_complete"][-1]
         self.assertEqual(complete["rewardTitle"], "弹药缓存")
+        self.assertIn("手枪弹", complete["rewardText"])
         self.assertIsNotNone(game.intermission)
 
         game.continue_intermission("p1")
@@ -837,6 +982,60 @@ class GameCoreTest(unittest.TestCase):
         started = [data for ev, data in events if ev == "wave_start"][-1]
         self.assertEqual(started["routeReward"]["route"], "service")
         self.assertIn("features", started)
+
+    def test_archive_extraction_requires_lore_and_grants_high_value_reward(self):
+        game, events = self.make_game()
+        now = game._now()
+        player = game.players["p1"]
+        exit_point = {
+            "id": "archive-reward",
+            "type": "archive",
+            "name": "档案门",
+            "text": "拼合黑匣档案",
+            "requires": {"lore": 1, "sample": 1},
+            "x": player["x"],
+            "y": player["y"],
+            "radius": MISSION_CAPTURE_RADIUS,
+            "charge": 0.99,
+            "visible": True,
+            "done": False,
+            "wave": game.wave,
+            "color": "#ff8fb6",
+            "rewardTitle": "档案门",
+            "rewardText": "高危撤离：全队获得爆破弹 +1、保护罩掉落，并额外拼合档案线索。",
+            "shortReward": "爆破弹/护盾/线索",
+        }
+        game.extractions = [exit_point]
+        game.mission = exit_point
+        game.task_counts["sample"] = 1
+
+        game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
+        self.assertIsNone(game.intermission)
+        self.assertLess(exit_point["charge"], 1)
+
+        player["lore"] = 1
+        game._update_mission(EXTRACTION_CAPTURE_SECONDS, now + 1)
+
+        self.assertIsNotNone(game.intermission)
+        self.assertGreaterEqual(player["ammo_reserve"]["explosive"], 1)
+        self.assertGreater(player["shield_until"], now)
+        complete = [data for ev, data in events if ev == "mission_complete"][-1]
+        self.assertEqual(complete["rewardTitle"], "档案门")
+
+    def test_stage_wipes_after_lives_are_exhausted(self):
+        game, events = self.make_game()
+        now = game._now()
+        player = game.players["p1"]
+        player["protect_until"] = 0
+        player["lives"] = 0
+
+        game._kill_player("p1", "test", now)
+        game.tick(SERVER_DT, now=now + 2.4)
+
+        self.assertFalse(player["dead"])
+        self.assertEqual(player["lives"], PLAYER_STAGE_LIVES)
+        self.assertTrue(any(ev == "stage_failed" for ev, _ in events))
+        self.assertTrue(any(ev == "wave_start" for ev, _ in events))
 
     def test_intermission_talent_purchase_spends_parts_and_applies_effect(self):
         game, events = self.make_game()

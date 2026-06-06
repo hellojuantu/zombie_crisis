@@ -13,7 +13,7 @@ DASH_DIST = 112
 DASH_CD = 1.15
 MOVE_COLLISION_STEP = 14.0
 
-PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 18
 SERVER_TICK_HZ = 30
 SERVER_DT = 1 / SERVER_TICK_HZ
 SNAPSHOT_HZ = 16
@@ -51,8 +51,37 @@ MELEE_DAMAGE = 34
 MELEE_COOLDOWN = 0.48
 MELEE_KNOCKBACK = 46
 MAG_SIZE = 24
-MAX_RESERVE_AMMO = 168
-START_RESERVE_AMMO = 108
+MAX_PISTOL_RESERVE = 168
+START_PISTOL_AMMO = 108
+PLAYER_STAGE_LIVES = 3
+AMMO_TYPE_LABELS = {
+    "pistol": "手枪弹",
+    "rifle": "步枪弹",
+    "smg": "冲锋枪弹",
+    "shell": "霰弹",
+    "explosive": "爆破弹",
+}
+START_AMMO_RESERVE = {
+    "pistol": START_PISTOL_AMMO,
+    "rifle": 0,
+    "smg": 0,
+    "shell": 0,
+    "explosive": 0,
+}
+MAX_RESERVE_BY_TYPE = {
+    "pistol": MAX_PISTOL_RESERVE,
+    "rifle": 108,
+    "smg": 216,
+    "shell": 42,
+    "explosive": 4,
+}
+AMMO_PICKUP_BY_TYPE = {
+    "pistol": (18, 32),
+    "rifle": (12, 22),
+    "smg": (28, 46),
+    "shell": (5, 9),
+    "explosive": (1, 2),
+}
 RELOAD_SECONDS = 1.15
 AMMO_PICKUP_MIN = 16
 AMMO_PICKUP_MAX = 30
@@ -74,6 +103,8 @@ WEAPON_TYPES = {
         "pellets": 1,
         "spread": 0.0,
         "ammo_cost": 1,
+        "ammo_type": "pistol",
+        "unlock_reserve": 0,
         "muzzle": 34,
         "color": "#dce7f1",
         "explosion_radius": 0,
@@ -91,6 +122,8 @@ WEAPON_TYPES = {
         "pellets": 1,
         "spread": 0.035,
         "ammo_cost": 1,
+        "ammo_type": "rifle",
+        "unlock_reserve": 28,
         "muzzle": 44,
         "color": "#8fd0ff",
         "explosion_radius": 0,
@@ -108,6 +141,8 @@ WEAPON_TYPES = {
         "pellets": 7,
         "spread": 0.38,
         "ammo_cost": 1,
+        "ammo_type": "shell",
+        "unlock_reserve": 10,
         "muzzle": 35,
         "color": "#ffc247",
         "explosion_radius": 0,
@@ -125,6 +160,8 @@ WEAPON_TYPES = {
         "pellets": 1,
         "spread": 0.095,
         "ammo_cost": 1,
+        "ammo_type": "smg",
+        "unlock_reserve": 72,
         "muzzle": 32,
         "color": "#48f0a0",
         "explosion_radius": 0,
@@ -132,20 +169,23 @@ WEAPON_TYPES = {
     },
     "launcher": {
         "name": "爆破枪",
-        "mag_size": 4,
-        "fire_interval": 0.78,
+        "mag_size": 2,
+        "fire_interval": 0.86,
         "reload_seconds": 1.75,
-        "bullet_speed": 520,
+        "bullet_speed": 500,
         "bullet_life": 1.05,
         "bullet_radius": 7.2,
-        "damage": 34,
+        "damage": 22,
         "pellets": 1,
         "spread": 0.02,
         "ammo_cost": 1,
+        "ammo_type": "explosive",
+        "unlock_reserve": 0,
         "muzzle": 44,
         "color": "#ff8844",
-        "explosion_radius": 150,
-        "explosion_damage": 78,
+        "explosion_radius": 118,
+        "explosion_damage": 52,
+        "boss_damage_mult": 0.38,
         "pierce": 0,
     },
 }
@@ -212,7 +252,7 @@ MAZE_EXTRA_LINKS = 8
 MISSION_CAPTURE_RADIUS = 78
 MISSION_CAPTURE_SECONDS = 3.8
 MISSION_DISCOVER_RADIUS = 420
-EXTRACTION_COUNT = 3
+EXTRACTION_COUNT = 4
 EXTRACTION_CAPTURE_SECONDS = 3.2
 EXTRACTION_DISCOVER_RADIUS = 460
 TASK_PICKUPS_PER_STAGE = 5
@@ -342,12 +382,42 @@ ZOMBIE_TYPES = {
         "weight": 1,
         "unlock": 3,
     },
-    "boss": {
-        "hp": 720,
-        "speed": 60,
-        "radius": 34,
+    "stalker": {
+        "hp": 66,
+        "speed": 192,
+        "radius": 13,
+        "damage": 19,
+        "score": 34,
+        "color": "#cfd2ff",
+        "weight": 2,
+        "unlock": 2,
+    },
+    "spitter": {
+        "hp": 58,
+        "speed": 82,
+        "radius": 15,
+        "damage": 15,
+        "score": 36,
+        "color": "#7fdc71",
+        "weight": 2,
+        "unlock": 2,
+    },
+    "warden": {
+        "hp": 285,
+        "speed": 82,
+        "radius": 29,
         "damage": 42,
-        "score": 220,
+        "score": 86,
+        "color": "#b7a0ff",
+        "weight": 1,
+        "unlock": 4,
+    },
+    "boss": {
+        "hp": 2400,
+        "speed": 86,
+        "radius": 43,
+        "damage": 58,
+        "score": 560,
         "color": "#d9445f",
         "weight": 0,
         "unlock": 3,
@@ -360,6 +430,11 @@ ITEM_TYPES = {
     "shield": {"color": "#ffffff", "icon": "S", "name": "护盾", "weight": 1},
     "medkit": {"color": "#ff6688", "icon": "+", "name": "医疗包", "weight": 2},
     "ammo": {"color": "#dce7f1", "icon": "A", "name": "弹药包", "weight": 2},
+    "ammo_pistol": {"color": "#dce7f1", "icon": "9", "name": "手枪弹药", "weight": 0, "ammo_type": "pistol"},
+    "ammo_rifle": {"color": "#8fd0ff", "icon": "AR", "name": "步枪弹药", "weight": 0, "ammo_type": "rifle"},
+    "ammo_smg": {"color": "#48f0a0", "icon": "SM", "name": "冲锋枪弹药", "weight": 0, "ammo_type": "smg"},
+    "ammo_shell": {"color": "#ffc247", "icon": "SG", "name": "霰弹药", "weight": 0, "ammo_type": "shell"},
+    "ammo_explosive": {"color": "#ff8844", "icon": "EX", "name": "爆破弹药", "weight": 0, "ammo_type": "explosive"},
     "parts": {"color": "#8fd0ff", "icon": "P", "name": "武器零件", "weight": 2},
     "nuke": {"color": "#ff8844", "icon": "!", "name": "清场炸弹", "weight": 1},
     "weapon_rifle": {"color": "#8fd0ff", "icon": "AR", "name": "步枪箱", "weight": 0, "weapon": "rifle"},

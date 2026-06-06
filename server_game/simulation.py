@@ -16,8 +16,10 @@ from .config import (
     BLOATER_ZOMBIE_DAMAGE,
     BOSS_WAVE_INTERVAL,
     CAMPAIGN_FINAL_WAVE,
+    AMMO_PICKUP_BY_TYPE,
     AMMO_PICKUP_MAX,
     AMMO_PICKUP_MIN,
+    AMMO_TYPE_LABELS,
     COMBO_RAPID_BONUS_AT,
     COMBO_SHIELD_BONUS_AT,
     COMBO_SPREAD_BONUS_AT,
@@ -70,7 +72,8 @@ from .config import (
     MATERIAL_PICKUP_MIN,
     MAX_BULLETS,
     MAX_ITEMS,
-    MAX_RESERVE_AMMO,
+    MAX_RESERVE_BY_TYPE,
+    MAX_PISTOL_RESERVE,
     MAX_SYNC_BULLETS_PER_CLIENT,
     MAX_SYNC_ITEMS_PER_CLIENT,
     MAX_SYNC_PLAYERS_PER_CLIENT,
@@ -103,6 +106,7 @@ from .config import (
     NUKE_RADIUS,
     PLAYER_MAX_HP,
     PLAYER_INTEREST_RADIUS,
+    PLAYER_STAGE_LIVES,
     PLAYER_R,
     PLAYER_SPD,
     PLAYER_STALE_TIMEOUT,
@@ -121,7 +125,7 @@ from .config import (
     SNAPSHOT_HZ,
     SPATIAL_CELL,
     SPREAD_ANGLE,
-    START_RESERVE_AMMO,
+    START_AMMO_RESERVE,
     STORY_BEATS,
     TASK_DROP_CHANCE,
     TASK_PICKUPS_PER_STAGE,
@@ -174,6 +178,17 @@ def weapon_meta(weapon_id):
     return WEAPON_TYPES.get(weapon_id, WEAPON_TYPES["pistol"])
 
 
+def ammo_type_for_weapon(weapon_id):
+    return weapon_meta(weapon_id).get("ammo_type", "pistol")
+
+
+SCENE_MAIN = "main"
+ROOM_SCENE_PREFIX = "room:"
+ROOM_W = 1900
+ROOM_H = 1180
+ROOM_DOOR_RADIUS = 74
+
+
 TALENT_DEFS = {
     "vitality": {
         "name": "生命强化",
@@ -189,7 +204,7 @@ TALENT_DEFS = {
     },
     "capacity": {
         "name": "弹匣扩容",
-        "desc": "所有枪械弹匣 +2，备用弹 +18",
+        "desc": "所有枪械弹匣 +2，并补充分类备用弹",
         "max": 4,
         "base_cost": 3,
     },
@@ -230,6 +245,7 @@ class Game:
         self.maze_cols = MAZE_COLS
         self.maze_rows = MAZE_ROWS
         self.map_features = []
+        self.room_scenes = {}
         self.facility_spawn_timer = 0.0
         self.lab_sample_until = 0.0
         self.floor_points = []
@@ -285,18 +301,40 @@ class Game:
             "fuse": self.task_counts.get("fuse", 0),
             "sample": self.task_counts.get("sample", 0),
             "keycard": self.task_counts.get("keycard", 0),
+            "lore": self._resource_count("lore"),
         }
 
     def _requires_text(self, requires):
-        names = {"fuse": "保险丝", "sample": "病毒样本", "keycard": "门禁卡"}
+        names = {"fuse": "保险丝", "sample": "病毒样本", "keycard": "门禁卡", "lore": "档案"}
         parts = []
         for typ, needed in requires.items():
-            have = self.task_counts.get(typ, 0)
+            have = self._resource_count(typ)
             parts.append(f"{names.get(typ, typ)} {have}/{needed}")
         return " · ".join(parts) if parts else "无需额外物资"
 
+    def _resource_count(self, typ):
+        if typ == "lore":
+            return sum(player.get("lore", 0) for player in self.players.values())
+        return self.task_counts.get(typ, 0)
+
     def _exit_ready(self, exit_point):
-        return all(self.task_counts.get(typ, 0) >= needed for typ, needed in exit_point.get("requires", {}).items())
+        return all(self._resource_count(typ) >= needed for typ, needed in exit_point.get("requires", {}).items())
+
+    def _service_ammo_reward_amounts(self):
+        return {
+            "pistol": 34 + min(20, self.wave * 2),
+            "rifle": 16 + min(16, self.wave * 2),
+            "smg": 42 + min(28, self.wave * 3),
+            "shell": 6 + min(6, self.wave // 2),
+        }
+
+    def _ammo_reward_text(self, amounts):
+        parts = [
+            f"{AMMO_TYPE_LABELS.get(ammo_type, ammo_type)} +{amount}"
+            for ammo_type, amount in amounts.items()
+            if amount > 0
+        ]
+        return "全队补充：" + "、".join(parts)
 
     def _stage_director_for_wave(self):
         variants = [
@@ -356,8 +394,8 @@ class Game:
             "service": {
                 "route": "service",
                 "rewardTitle": "弹药缓存",
-                "rewardText": "全队补充备用弹药，下一层开局更敢推进。",
-                "shortReward": "弹药",
+                "rewardText": self._ammo_reward_text(self._service_ammo_reward_amounts()),
+                "shortReward": "常规弹药",
                 "routeHook": "维修通道深处传来金属敲击，像有人在给下一层装弹。",
             },
             "lab": {
@@ -370,9 +408,16 @@ class Game:
             "security": {
                 "route": "security",
                 "rewardTitle": "安保武备",
-                "rewardText": "全队获得武器零件，下一层更容易升级火力。",
+                "rewardText": "全队获得武器零件，并优先解锁一把未发现武器。",
                 "shortReward": "武备",
                 "routeHook": "电梯面板亮起 B13，但设施蓝图里没有这一层。",
+            },
+            "archive": {
+                "route": "archive",
+                "rewardTitle": "档案门",
+                "rewardText": "高危撤离：全队获得爆破弹 +1、保护罩掉落，并额外拼合档案线索。",
+                "shortReward": "爆破弹/护盾/线索",
+                "routeHook": "档案门背后没有出口，只有更深一层的撤离名单。",
             },
         }
         return rewards.get(route, {
@@ -408,6 +453,12 @@ class Game:
                 {"keycard": 1 + (1 if self.wave >= 4 else 0), "sample": 1 + tier},
                 "夺取门禁卡并提交样本",
             ),
+            (
+                "archive",
+                "档案门",
+                {"lore": 1 + tier, "keycard": 1 + (1 if self.wave >= 5 else 0), "sample": 2 + tier},
+                "拼合黑匣档案并用样本骗过门后扫描",
+            ),
         ]
         exits = []
         for idx, (point, spec) in enumerate(zip(selected, templates)):
@@ -429,7 +480,7 @@ class Game:
                 "charge_spawn": 0.0,
                 "ready_notified": False,
                 "wave": self.wave,
-                "color": ("#66d9ff", "#b7ff47", "#d98cff")[idx],
+                "color": ("#66d9ff", "#b7ff47", "#d98cff", "#ff8fb6")[idx],
                 "rewardTitle": reward["rewardTitle"],
                 "rewardText": reward["rewardText"],
                 "shortReward": reward["shortReward"],
@@ -441,6 +492,7 @@ class Game:
         self.stage_director = self._stage_director_for_wave()
         self.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
         self.lab_sample_until = 0.0
+        self.power_on = False
         self.extractions = self._new_extractions()
         self.mission = self.extractions[0] if self.extractions else None
         fuse_goal = max((exit_point.get("requires", {}).get("fuse", 0) for exit_point in self.extractions), default=0)
@@ -529,6 +581,7 @@ class Game:
                 "stageId": "intermission",
                 "stageTitle": "撤离整备",
                 "infectionSource": 0,
+                "powered": bool(getattr(self, "power_on", False)),
             }
             if full:
                 payload.update({
@@ -580,6 +633,7 @@ class Game:
             "stageId": director.get("id", ""),
             "stageTitle": director.get("title", ""),
             "infectionSource": max(0, self.infection_source_remaining),
+            "powered": bool(getattr(self, "power_on", False)),
         }
         if full:
             payload.update({
@@ -636,8 +690,51 @@ class Game:
     def _player_speed(self, player):
         return player_speed(player.get("level", 1)) + talent_level(player, "agility") * 12
 
-    def _max_reserve_for_player(self, player):
-        return MAX_RESERVE_AMMO + talent_level(player, "capacity") * 18
+    def _max_reserve_for_player(self, player, ammo_type="pistol"):
+        base = MAX_RESERVE_BY_TYPE.get(ammo_type, MAX_PISTOL_RESERVE)
+        capacity = talent_level(player, "capacity")
+        if ammo_type == "explosive":
+            return base + min(2, capacity)
+        if ammo_type == "shell":
+            return base + capacity * 6
+        return base + capacity * 18
+
+    def _ammo_reserve_pool(self, player):
+        pool = player.setdefault("ammo_reserve", {})
+        for ammo_type, amount in START_AMMO_RESERVE.items():
+            pool.setdefault(ammo_type, 0 if ammo_type != "pistol" else amount)
+        return pool
+
+    def _ammo_reserve(self, player, ammo_type=None):
+        ammo_type = ammo_type or ammo_type_for_weapon(player.get("weapon_id", "pistol"))
+        return max(0, int(self._ammo_reserve_pool(player).get(ammo_type, 0)))
+
+    def _set_ammo_reserve(self, player, ammo_type, amount):
+        pool = self._ammo_reserve_pool(player)
+        capped = min(self._max_reserve_for_player(player, ammo_type), max(0, int(amount)))
+        pool[ammo_type] = capped
+        if ammo_type == ammo_type_for_weapon(player.get("weapon_id", "pistol")):
+            player["current_reserve"] = capped
+        return capped
+
+    def _add_ammo_reserve(self, player, ammo_type, amount):
+        return self._set_ammo_reserve(player, ammo_type, self._ammo_reserve(player, ammo_type) + amount)
+
+    def _ammo_pool_snapshot(self, player):
+        pool = self._ammo_reserve_pool(player)
+        return ",".join(
+            f"{ammo_type}:{max(0, int(pool.get(ammo_type, 0)))}"
+            for ammo_type in AMMO_TYPE_LABELS.keys()
+        )
+
+    def _current_ammo_payload(self, player, ammo_type=None):
+        ammo_type = ammo_type or ammo_type_for_weapon(player.get("weapon_id", "pistol"))
+        return {
+            "ammoType": ammo_type,
+            "ammoTypeName": AMMO_TYPE_LABELS.get(ammo_type, "备用弹"),
+            "ammoPools": self._ammo_pool_snapshot(player),
+            "currentReserve": self._ammo_reserve(player, ammo_type),
+        }
 
     def _apply_talent_effects(self, player, talent_id, now):
         if talent_id == "vitality":
@@ -646,7 +743,8 @@ class Game:
             player["hp"] = min(player["max_hp"], player.get("hp", player["max_hp"]) + 18)
         elif talent_id == "capacity":
             self._sync_weapon_fields(player)
-            player["reserve_ammo"] = min(self._max_reserve_for_player(player), player.get("reserve_ammo", 0) + 18)
+            for ammo_type, bonus in (("pistol", 18), ("rifle", 14), ("smg", 24), ("shell", 4)):
+                self._add_ammo_reserve(player, ammo_type, bonus)
         elif talent_id == "gunsmith":
             player["weapon_level"] = min(WEAPON_MAX_LEVEL, player.get("weapon_level", 1) + 1)
             self._sync_weapon_fields(player)
@@ -688,7 +786,7 @@ class Game:
         player["materials"] -= cost
         talents[talent_id] = level + 1
         self._apply_talent_effects(player, talent_id, self._now())
-        self._emit_to("talent_upgrade", {
+        payload = {
             "pid": sid,
             "talent": talent_id,
             "name": meta["name"],
@@ -698,7 +796,6 @@ class Game:
             "hp": player.get("hp", PLAYER_MAX_HP),
             "ammo": player.get("ammo", MAG_SIZE),
             "magSize": player.get("mag_size", MAG_SIZE),
-            "reserve": player.get("reserve_ammo", 0),
             "weaponLevel": player.get("weapon_level", 1),
             "speed": self._player_speed(player),
             "talents": self._talent_snapshot(player),
@@ -706,7 +803,9 @@ class Game:
             "col": "#48f0a0",
             "x": round(player["x"], 1),
             "y": round(player["y"], 1),
-        }, [sid])
+        }
+        payload.update(self._current_ammo_payload(player))
+        self._emit_to("talent_upgrade", payload, [sid])
         return True
 
     def reset(self, keep_players=False):
@@ -730,14 +829,19 @@ class Game:
         payload["_targets"] = clean_targets
         self.emit(event, payload)
 
-    def _emit_near(self, event, data, x, y, radius=EVENT_INTEREST_RADIUS, include=None):
+    def _emit_near(self, event, data, x, y, radius=EVENT_INTEREST_RADIUS, include=None, scene=SCENE_MAIN):
         targets = []
+        event_scene = scene or data.get("scene") or SCENE_MAIN
         for sid, player in self.players.items():
+            if self._entity_scene(player) != event_scene:
+                continue
             if math.hypot(player["x"] - x, player["y"] - y) <= radius:
                 targets.append(sid)
         if include:
             targets.append(include)
-        self._emit_to(event, data, targets)
+        payload = dict(data)
+        payload.setdefault("sceneId", event_scene)
+        self._emit_to(event, payload, targets)
 
     def _now(self):
         return time.monotonic()
@@ -804,6 +908,9 @@ class Game:
             ("generator", "机房", max(2, cols - 5), 1 + (self.wave % 3 == 0), 3, 3),
             ("lab", "样本库", max(2, cols // 2 - 1), max(1, rows - 4), 3, 3),
             ("armory", "仓库", max(1, cols // 2 - 4), max(1, mid - 2), 2, 4),
+            ("archive", "档案室", max(1, cols // 2 + 2), max(1, mid + 2), 2, 3),
+            ("security", "安保室", max(1, cols - 3), max(1, mid - 2), 2, 3),
+            ("morgue", "停尸间", max(1, cols // 3), max(1, rows - 3), 2, 2),
         ]
         for effect, label, rc, rr, rw, rh in room_specs:
             center = (min(cols - 1, rc + rw // 2), min(rows - 1, rr + rh // 2))
@@ -818,6 +925,7 @@ class Game:
             self.map_features.append({
                 "kind": "room",
                 "id": f"{effect}-{self.wave}",
+                "scene_id": f"{ROOM_SCENE_PREFIX}{effect}-{self.wave}",
                 "effect": effect,
                 "label": label,
                 "x": round(fx - MAZE_CELL * 0.42, 1),
@@ -956,7 +1064,123 @@ class Game:
                 })
         self.maze_openings = openings
         self.maze_margin = (margin_x, margin_y)
+        self._build_room_scenes()
         self._index_obstacles()
+
+    def _build_room_scenes(self):
+        self.room_scenes = {}
+        palettes = {
+            "medbay": "#48f0a0",
+            "generator": "#66d9ff",
+            "lab": "#b7ff47",
+            "armory": "#ffc247",
+            "archive": "#aee6ff",
+            "security": "#d98cff",
+            "morgue": "#b7ff47",
+        }
+        for room in [f for f in self.map_features if f.get("kind") == "room"]:
+            scene_id = room.get("scene_id") or f"{ROOM_SCENE_PREFIX}{room['id']}"
+            room["scene_id"] = scene_id
+            effect = room.get("effect", "room")
+            tint = palettes.get(effect, "#dce7f1")
+            w, h = ROOM_W, ROOM_H
+            door_y = h / 2
+            door_gap = 190
+            obs = []
+
+            def wall(x, y, ww, hh, kind="wall"):
+                obs.append({
+                    "x": round(x, 1),
+                    "y": round(y, 1),
+                    "w": round(ww, 1),
+                    "h": round(hh, 1),
+                    "kind": kind,
+                })
+
+            wall(80, 72, w - 160, 42)
+            wall(80, h - 114, w - 160, 42)
+            wall(w - 122, 72, 42, h - 144)
+            wall(80, 72, 42, door_y - door_gap / 2 - 72)
+            wall(80, door_y + door_gap / 2, 42, h - 114 - (door_y + door_gap / 2))
+            wall(w * 0.55, h * 0.34, 54, h * 0.38, "bulkhead")
+
+            features = [
+                {
+                    "kind": "room",
+                    "id": f"{room['id']}-interior",
+                    "effect": effect,
+                    "label": room.get("label", "设施"),
+                    "x": 126,
+                    "y": 118,
+                    "w": w - 252,
+                    "h": h - 236,
+                    "active": room.get("active", True),
+                    "searched": room.get("searched", False),
+                },
+                {
+                    "kind": "door",
+                    "id": f"{room['id']}-exit",
+                    "label": "返回走廊",
+                    "x": 92,
+                    "y": round(door_y - 72, 1),
+                    "w": 64,
+                    "h": 144,
+                    "color": tint,
+                },
+            ]
+
+            if effect == "medbay":
+                for i in range(4):
+                    x = 300 + i % 2 * 360
+                    y = 250 + i // 2 * 330
+                    wall(x, y, 138, 42, "gurney")
+                features.append({"kind": "blood", "x": 1120, "y": 740, "w": 130, "h": 68})
+            elif effect == "generator":
+                wall(420, 260, 160, 92, "generator")
+                wall(1130, 630, 220, 70, "generator")
+                features.append({"kind": "warning", "x": 980, "y": 230, "w": 260, "h": 140})
+            elif effect == "lab":
+                for i in range(5):
+                    wall(330 + i * 240, 270 + (i % 2) * 260, 74, 112, "tank")
+                features.append({"kind": "pool", "x": 1320, "y": 760, "w": 160, "h": 86})
+            elif effect == "armory":
+                for i in range(5):
+                    wall(300 + i * 220, 320 + (i % 2) * 260, 120, 54, "locker")
+                features.append({"kind": "warning", "x": 1150, "y": 240, "w": 180, "h": 110})
+            elif effect == "archive":
+                for i in range(6):
+                    wall(300 + i * 180, 250 + (i % 3) * 190, 90, 140, "locker")
+                features.append({"kind": "blood", "x": 1280, "y": 620, "w": 92, "h": 48})
+            elif effect == "security":
+                wall(420, 300, 220, 74, "locker")
+                wall(1050, 250, 270, 58, "generator")
+                features.append({"kind": "warning", "x": 920, "y": 610, "w": 300, "h": 160})
+            elif effect == "morgue":
+                for i in range(6):
+                    wall(300 + (i % 3) * 260, 270 + (i // 3) * 300, 150, 38, "gurney")
+                features.append({"kind": "blood", "x": 1220, "y": 760, "w": 180, "h": 96})
+                features.append({"kind": "pool", "x": 1010, "y": 470, "w": 120, "h": 66})
+
+            self.room_scenes[scene_id] = {
+                "id": scene_id,
+                "room_id": room["id"],
+                "effect": effect,
+                "name": room.get("label", "设施"),
+                "mw": w,
+                "mh": h,
+                "spawn": (210, door_y),
+                "exit": {"x": 130, "y": door_y, "radius": ROOM_DOOR_RADIUS},
+                "loot": {"x": 250, "y": 170, "w": w - 420, "h": h - 340},
+                "zombie_points": [
+                    (w - 240, 190),
+                    (w - 260, h - 210),
+                    (w * 0.68, 180),
+                    (w * 0.72, h - 190),
+                    (w * 0.44, h - 190),
+                ],
+                "obs": obs,
+                "features": features,
+            }
 
     def _cell_center(self, cell):
         """Get world coordinates for a maze cell center."""
@@ -1039,6 +1263,8 @@ class Game:
 
     def _zombie_waypoint(self, zombie, target, now):
         """Compute the next maze-aware waypoint for a zombie."""
+        if self._entity_scene(zombie) != SCENE_MAIN:
+            return target
         target_id = target.get("id")
         start_cell = self._world_to_cell(zombie["x"], zombie["y"])
         end_cell = self._world_to_cell(target["x"], target["y"])
@@ -1129,6 +1355,66 @@ class Game:
             grid.setdefault((cx, cy), []).append((eid, entity))
         return grid
 
+    def _entity_scene(self, entity):
+        return entity.get("scene") or SCENE_MAIN
+
+    def _scene_def(self, scene_id):
+        if not scene_id or scene_id == SCENE_MAIN:
+            return {
+                "id": SCENE_MAIN,
+                "name": "设施楼层",
+                "mw": MAP_W,
+                "mh": MAP_H,
+                "obs": self.obstacles,
+                "features": self.map_features,
+            }
+        return self.room_scenes.get(scene_id) or {
+            "id": SCENE_MAIN,
+            "name": "设施楼层",
+            "mw": MAP_W,
+            "mh": MAP_H,
+            "obs": self.obstacles,
+            "features": self.map_features,
+        }
+
+    def _scene_payload(self, scene_id):
+        scene = self._scene_def(scene_id)
+        is_main = scene.get("id") == SCENE_MAIN
+        return {
+            "scene": scene.get("id", SCENE_MAIN),
+            "sceneName": scene.get("name", "设施楼层"),
+            "mw": scene.get("mw", MAP_W),
+            "mh": scene.get("mh", MAP_H),
+            "obs": self.obstacles if is_main else scene.get("obs", []),
+            "features": self.map_features if is_main else scene.get("features", []),
+            "exits": self._extractions_snapshot() if is_main else [],
+            "mission": self._mission_snapshot() if is_main else None,
+            "obj": self._objective_snapshot(),
+        }
+
+    def _room_by_id(self, room_id):
+        for feature in self.map_features:
+            if feature.get("kind") == "room" and feature.get("id") == room_id:
+                return feature
+        return None
+
+    def _room_for_scene(self, scene_id):
+        scene = self.room_scenes.get(scene_id or "")
+        return self._room_by_id(scene.get("room_id", "")) if scene else None
+
+    def _emit_scene_change(self, sid, reason="scene"):
+        player = self.players.get(sid)
+        if not player:
+            return
+        payload = self._scene_payload(self._entity_scene(player))
+        payload.update({
+            "pid": sid,
+            "reason": reason,
+            "x": round(player["x"], 1),
+            "y": round(player["y"], 1),
+        })
+        self._emit_to("scene_change", payload, [sid])
+
     def _index_obstacles(self):
         self.obstacle_grid = {}
         for idx, obstacle in enumerate(self.obstacles):
@@ -1140,7 +1426,10 @@ class Game:
                 for cx in range(c0x, c1x + 1):
                     self.obstacle_grid.setdefault((cx, cy), []).append((idx, obstacle))
 
-    def _near_obstacles(self, x, y, radius):
+    def _near_obstacles(self, x, y, radius, scene=SCENE_MAIN):
+        if scene and scene != SCENE_MAIN:
+            yield from self._scene_def(scene).get("obs", [])
+            return
         if not self.obstacle_grid:
             yield from self.obstacles
             return
@@ -1174,10 +1463,13 @@ class Game:
     def _zombies_near(self, grid, x, y, radius):
         return self._near(grid, x, y, radius)
 
-    def _move_col_once(self, x, y, radius, dx, dy):
-        nx = max(radius, min(MAP_W - radius, x + dx))
-        ny = max(radius, min(MAP_H - radius, y + dy))
-        for obstacle in self._near_obstacles(nx, ny, radius + MAZE_WALL + 4):
+    def _move_col_once(self, x, y, radius, dx, dy, scene=SCENE_MAIN):
+        scene_def = self._scene_def(scene)
+        mw = scene_def.get("mw", MAP_W)
+        mh = scene_def.get("mh", MAP_H)
+        nx = max(radius, min(mw - radius, x + dx))
+        ny = max(radius, min(mh - radius, y + dy))
+        for obstacle in self._near_obstacles(nx, ny, radius + MAZE_WALL + 4, scene=scene):
             if circ_rect(nx, ny, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"]):
                 if not circ_rect(nx, y, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"]):
                     ny = y
@@ -1187,7 +1479,7 @@ class Game:
                     nx, ny = x, y
         return nx, ny
 
-    def move_col(self, x, y, radius, dx, dy):
+    def move_col(self, x, y, radius, dx, dy, scene=SCENE_MAIN):
         dist = math.hypot(dx, dy)
         if dist <= 0.01:
             return x, y
@@ -1196,20 +1488,65 @@ class Game:
         step_y = dy / steps
         cx, cy = x, y
         for _ in range(steps):
-            nx, ny = self._move_col_once(cx, cy, radius, step_x, step_y)
+            nx, ny = self._move_col_once(cx, cy, radius, step_x, step_y, scene=scene)
             if abs(nx - cx) < 0.001 and abs(ny - cy) < 0.001:
                 break
             cx, cy = nx, ny
         return cx, cy
 
-    def safe_spawn(self):
+    def _room_spawn(self, scene_id, near=None, min_player_dist=0, max_player_dist=None, jitter=42):
+        scene = self._scene_def(scene_id)
+        points = scene.get("zombie_points") or [
+            (scene.get("mw", ROOM_W) - 240, 190),
+            (scene.get("mw", ROOM_W) - 260, scene.get("mh", ROOM_H) - 210),
+            (scene.get("mw", ROOM_W) * 0.62, scene.get("mh", ROOM_H) * 0.5),
+        ]
+        candidates = []
+        for point in points:
+            if near is not None:
+                d = math.hypot(point[0] - near["x"], point[1] - near["y"])
+                if d < min_player_dist:
+                    continue
+                if max_player_dist is not None and d > max_player_dist:
+                    continue
+            candidates.append(point)
+        if not candidates:
+            candidates = points
+        for _ in range(30):
+            px, py = random.choice(candidates)
+            x = clamp(px + random.uniform(-jitter, jitter), PLAYER_R, scene.get("mw", ROOM_W) - PLAYER_R)
+            y = clamp(py + random.uniform(-jitter, jitter), PLAYER_R, scene.get("mh", ROOM_H) - PLAYER_R)
+            if any(circ_rect(x, y, PLAYER_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, PLAYER_R + MAZE_WALL + 4, scene=scene_id)):
+                continue
+            return x, y
+        return random.choice(candidates)
+
+    def safe_spawn(self, scene=SCENE_MAIN):
+        if scene and scene != SCENE_MAIN:
+            scene_def = self._scene_def(scene)
+            loot = scene_def.get("loot", {"x": 260, "y": 180, "w": ROOM_W - 520, "h": ROOM_H - 360})
+            return (
+                random.uniform(loot["x"], loot["x"] + loot["w"]),
+                random.uniform(loot["y"], loot["y"] + loot["h"]),
+            )
         return self._floor_spawn(min_player_dist=190, far_from_spawn=True)
 
     def safe_player_spawn(self):
         return self._jitter_floor_point(self.spawn_point, jitter=70)
 
-    def safe_zombie_spawn(self, pressure=False):
-        alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
+    def safe_zombie_spawn(self, pressure=False, scene=SCENE_MAIN):
+        alive = [
+            p for p in self.players.values()
+            if not p.get("dead") and not p.get("paused") and self._entity_scene(p) == scene
+        ]
+        if scene and scene != SCENE_MAIN:
+            near = random.choice(alive) if pressure and alive else None
+            return self._room_spawn(
+                scene,
+                near=near,
+                min_player_dist=130 if near else 0,
+                max_player_dist=640 if near else None,
+            )
         if pressure and alive:
             target = random.choice(alive)
             return self._floor_spawn(
@@ -1219,14 +1556,27 @@ class Game:
             )
         return self._floor_spawn(min_player_dist=430, far_from_spawn=True)
 
-    def safe_fog_spawn(self, origin=None):
+    def safe_fog_spawn(self, origin=None, scene=SCENE_MAIN):
+        if origin and origin.get("scene"):
+            scene = origin.get("scene")
+        if scene and scene != SCENE_MAIN:
+            return self._room_spawn(
+                scene,
+                near=origin,
+                min_player_dist=130 if origin else 0,
+                max_player_dist=760 if origin else None,
+                jitter=58,
+            )
         if origin:
             return self._floor_spawn(
                 min_player_dist=max(240, FOG_WAVE_MIN_DIST * 0.72),
                 max_player_dist=max(520, FOG_WAVE_MAX_DIST * 0.86),
                 near=origin,
             )
-        alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
+        alive = [
+            p for p in self.players.values()
+            if not p.get("dead") and not p.get("paused") and self._entity_scene(p) == scene
+        ]
         if alive:
             target = random.choice(alive)
             return self._floor_spawn(
@@ -1234,7 +1584,7 @@ class Game:
                 max_player_dist=FOG_WAVE_MAX_DIST,
                 near=target,
             )
-        return self.safe_zombie_spawn(pressure=True)
+        return self.safe_zombie_spawn(pressure=True, scene=scene)
 
     def _zombie_type_for_wave(self):
         choices = []
@@ -1261,8 +1611,11 @@ class Game:
             ("toxic", 1, 4),
             ("armored", 2, 2),
             ("leaper", 2, 3),
+            ("stalker", 2, 4),
+            ("spitter", 2, 3),
             ("screamer", 3, 2),
             ("bloater", 3, 1),
+            ("warden", 4, 1),
         )
         choices = []
         weights = []
@@ -1287,7 +1640,7 @@ class Game:
         elif source == "infection":
             self.infection_source_remaining = max(0, self.infection_source_remaining - 1)
 
-    def _spawn_pressure_pack(self, count, now, urgent=False, allow_infection_source=False):
+    def _spawn_pressure_pack(self, count, now, urgent=False, allow_infection_source=False, origin=None, scene=None):
         if count <= 0 or len(self.zombies) >= MAX_ZOMBIES:
             return 0
         available = self.wave_remaining + (self.infection_source_remaining if allow_infection_source else 0)
@@ -1296,11 +1649,18 @@ class Game:
         budget = min(count, available, MAX_ZOMBIES - len(self.zombies))
         spawned = 0
         spawned_from_source = 0
+        spawn_scene = scene or (origin.get("scene") if origin else None)
+        if not spawn_scene:
+            alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
+            spawn_scene = self._entity_scene(random.choice(alive)) if alive else SCENE_MAIN
         for _ in range(max(0, budget)):
             source = self._next_spawn_budget_source(allow_infection_source)
             if not source:
                 break
-            zid = self.spawn_zombie(ztype=self._pressure_zombie_type(urgent=urgent), pressure=True)
+            x = y = None
+            if origin:
+                x, y = self.safe_fog_spawn(origin=origin, scene=spawn_scene)
+            zid = self.spawn_zombie(x=x, y=y, ztype=self._pressure_zombie_type(urgent=urgent), pressure=True, scene=spawn_scene)
             if not zid:
                 continue
             self._consume_spawn_budget(source)
@@ -1317,7 +1677,7 @@ class Game:
         return spawned
 
     def _fog_zombie_type(self, index=0):
-        scripted = ("shade", "runner", "crawler", "toxic", "shade", "brute")
+        scripted = ("shade", "runner", "crawler", "toxic", "stalker", "spitter", "shade", "brute")
         if index < len(scripted):
             return scripted[index]
         roles = (
@@ -1328,8 +1688,11 @@ class Game:
             ("brute", 1, 2),
             ("armored", 2, 2),
             ("leaper", 2, 3),
+            ("stalker", 2, 4),
+            ("spitter", 2, 3),
             ("screamer", 3, 2),
             ("bloater", 3, 1),
+            ("warden", 4, 1),
         )
         choices = []
         weights = []
@@ -1365,6 +1728,24 @@ class Game:
                 "duration": 5.0,
                 "bonus": 2,
             },
+            "archive": {
+                "name": "档案室回声",
+                "color": "#aee6ff",
+                "duration": 5.3,
+                "bonus": 2,
+            },
+            "security": {
+                "name": "安保封锁",
+                "color": "#d98cff",
+                "duration": 5.8,
+                "bonus": 3,
+            },
+            "morgue": {
+                "name": "停尸间尸雾",
+                "color": "#b7ff47",
+                "duration": 6.1,
+                "bonus": 4,
+            },
             "terminal": {
                 "name": "终端回声",
                 "color": "#d98cff",
@@ -1392,16 +1773,16 @@ class Game:
         }
         return scenes.get(reason, scenes["director"])
 
-    def _trigger_fog_wave(self, now, reason="director", force=False, origin=None):
+    def _trigger_fog_wave(self, now, reason="director", force=False, origin=None, scene=None):
         if len(self.zombies) >= MAX_ZOMBIES:
             return 0
         if not force and now < self.next_fog_wave_at:
             return 0
         alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead")))
-        scene = self._fog_scene(reason)
+        fog_scene = self._fog_scene(reason)
         count = min(
             FOG_WAVE_MAX,
-            FOG_WAVE_COUNT_BASE + alive_count * FOG_WAVE_COUNT_PER_PLAYER + min(10, self.wave * 2) + scene.get("bonus", 0),
+            FOG_WAVE_COUNT_BASE + alive_count * FOG_WAVE_COUNT_PER_PLAYER + min(10, self.wave * 2) + fog_scene.get("bonus", 0),
             self.wave_remaining + self.infection_source_remaining,
             MAX_ZOMBIES - len(self.zombies),
         )
@@ -1412,14 +1793,15 @@ class Game:
         sx = 0.0
         sy = 0.0
         spawn_origin = None
+        spawn_scene = scene or (origin.get("scene") if origin else None) or SCENE_MAIN
         if origin:
             spawn_origin = {"x": origin["x"], "y": origin["y"]}
         for i in range(max(0, count)):
             source = self._next_spawn_budget_source(allow_infection_source=True)
             if not source:
                 break
-            x, y = self.safe_fog_spawn(origin=spawn_origin)
-            zid = self.spawn_zombie(x=x, y=y, ztype=self._fog_zombie_type(i), emit=True, pressure=True)
+            x, y = self.safe_fog_spawn(origin=spawn_origin, scene=spawn_scene)
+            zid = self.spawn_zombie(x=x, y=y, ztype=self._fog_zombie_type(i), emit=True, pressure=True, scene=spawn_scene)
             if not zid:
                 continue
             self._consume_spawn_budget(source)
@@ -1436,15 +1818,16 @@ class Game:
             return 0
         cooldown = max(8.0, FOG_WAVE_COOLDOWN - min(6.0, self.wave * 0.7))
         self.next_fog_wave_at = now + cooldown
-        duration = scene.get("duration", 4.8)
+        duration = fog_scene.get("duration", 4.8)
         self.fog_active_until = now + duration
         avg_x = sx / spawned
         avg_y = sy / spawned
         event_x = spawn_origin["x"] if spawn_origin else avg_x
         event_y = spawn_origin["y"] if spawn_origin else avg_y
-        self._emit("fog_wave", {
+        payload = {
             "reason": reason,
-            "scene": scene.get("name", "雾袭"),
+            "scene": fog_scene.get("name", "雾袭"),
+            "sceneId": spawn_scene,
             "count": spawned,
             "wave": self.wave,
             "duration": duration,
@@ -1452,17 +1835,21 @@ class Game:
             "y": round(event_y, 1),
             "spawnX": round(avg_x, 1),
             "spawnY": round(avg_y, 1),
-            "col": scene.get("color", "#d6eceb"),
+            "col": fog_scene.get("color", "#d6eceb"),
             "sourceCount": spawned_from_source,
             "sourceRemaining": self.infection_source_remaining,
-        })
+        }
+        if origin:
+            self._emit_near("fog_wave", payload, event_x, event_y, radius=EVENT_INTEREST_RADIUS * 1.2, scene=spawn_scene)
+        else:
+            self._emit("fog_wave", payload)
         return spawned
 
-    def spawn_zombie(self, x=None, y=None, ztype=None, emit=True, pressure=False):
+    def spawn_zombie(self, x=None, y=None, ztype=None, emit=True, pressure=False, scene=SCENE_MAIN):
         if len(self.zombies) >= MAX_ZOMBIES:
             return None
         if x is None:
-            x, y = self.safe_zombie_spawn(pressure=pressure)
+            x, y = self.safe_zombie_spawn(pressure=pressure, scene=scene)
         if ztype is None:
             ztype = self._zombie_type_for_wave()
         meta = ZOMBIE_TYPES[ztype]
@@ -1482,6 +1869,9 @@ class Game:
             "color": meta["color"],
             "target": None,
             "leap_cd": 0,
+            "spit_cd": 0,
+            "slam_cd": 0,
+            "phase": 0,
             "scream_cd": 0,
             "rally_until": 0,
             "path": None,
@@ -1489,17 +1879,18 @@ class Game:
             "path_goal": None,
             "path_time": 0,
             "path_idx": 1,
+            "scene": scene or SCENE_MAIN,
         }
         if emit:
-            self._emit_near("z_spawn", self._zombie_event(zid, self.zombies[zid]), x, y)
+            self._emit_near("z_spawn", self._zombie_event(zid, self.zombies[zid]), x, y, scene=scene or SCENE_MAIN)
         return zid
 
-    def spawn_item(self, x=None, y=None, item_type=None, emit=True):
+    def spawn_item(self, x=None, y=None, item_type=None, emit=True, scene=SCENE_MAIN):
         if len(self.items) >= MAX_ITEMS:
             return None
         if x is None:
-            x, y = self.safe_spawn()
-        if any(pt_in_rect(x, y, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL)):
+            x, y = self.safe_spawn(scene=scene)
+        if any(pt_in_rect(x, y, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL, scene=scene)):
             return None
         if item_type is None:
             names = list(ITEM_TYPES.keys())
@@ -1517,9 +1908,10 @@ class Game:
             "icon": meta["icon"],
             "name": meta["name"],
             "radius": ITEM_R,
+            "scene": scene or SCENE_MAIN,
         }
         if emit:
-            self._emit("i_spawn", self._item_event(iid, self.items[iid]))
+            self._emit_near("i_spawn", self._item_event(iid, self.items[iid]), x, y, scene=scene or SCENE_MAIN)
         return iid
 
     def _input_dir(self, keys):
@@ -1635,6 +2027,7 @@ class Game:
             state["ammo"] = min(player["mag_size"], max(0, int(player.get("ammo", 0))))
         player["ammo"] = min(player["mag_size"], max(0, state.get("ammo", player["mag_size"])))
         state["ammo"] = player["ammo"]
+        player["current_reserve"] = self._ammo_reserve(player, ammo_type_for_weapon(wid))
         return wid, weapon_meta(wid), state
 
     def _unlocked_weapon_ids(self, player):
@@ -1648,20 +2041,25 @@ class Game:
         weapons = player.setdefault("weapons", {})
         unlocked = weapon_id not in weapons
         weapons.setdefault(weapon_id, {"ammo": self._weapon_mag_size(player, weapon_id)})
-        player["reserve_ammo"] = min(self._max_reserve_for_player(player), player.get("reserve_ammo", 0) + (18 if unlocked else 10))
+        meta = weapon_meta(weapon_id)
+        ammo_type = meta.get("ammo_type", "pistol")
+        reserve_bonus = meta.get("unlock_reserve", 0) if unlocked else max(1, meta.get("unlock_reserve", 0) // 3)
+        self._add_ammo_reserve(player, ammo_type, reserve_bonus)
+        if weapon_id == player.get("weapon_id", "pistol"):
+            self._sync_weapon_fields(player)
         if unlocked and notify:
-            meta = weapon_meta(weapon_id)
-            self._emit_to("weapon_unlock", {
+            payload = {
                 "pid": player["id"],
                 "weapon": weapon_id,
                 "weaponName": meta["name"],
                 "weapons": self._unlocked_weapon_ids(player),
                 "ammo": player.get("ammo", 0),
-                "reserve": player.get("reserve_ammo", 0),
                 "col": meta.get("color", player.get("color", "#dce7f1")),
                 "x": round(player["x"], 1),
                 "y": round(player["y"], 1),
-            }, [player["id"]])
+            }
+            payload.update(self._current_ammo_payload(player, ammo_type))
+            self._emit_to("weapon_unlock", payload, [player["id"]])
         return unlocked
 
     def _switch_weapon(self, sid, player, weapon_id, now, notify=True):
@@ -1676,16 +2074,17 @@ class Game:
         player["reload_until"] = 0
         wid, meta, _ = self._sync_weapon_fields(player, prefer_player=False)
         if notify:
-            self._emit_to("weapon_switch", {
+            payload = {
                 "pid": sid,
                 "weapon": wid,
                 "weaponName": meta["name"],
                 "ammo": player.get("ammo", 0),
                 "magSize": player.get("mag_size", meta["mag_size"]),
-                "reserve": player.get("reserve_ammo", 0),
                 "weapons": self._unlocked_weapon_ids(player),
                 "col": meta.get("color", player.get("color", "#dce7f1")),
-            }, [sid])
+            }
+            payload.update(self._current_ammo_payload(player))
+            self._emit_to("weapon_switch", payload, [sid])
         return True
 
     def _apply_item(self, sid, item, now):
@@ -1693,6 +2092,7 @@ class Game:
         if not player or player.get("dead"):
             return
         typ = item["type"]
+        item_meta = ITEM_TYPES.get(typ, {})
         if ITEM_TYPES.get(typ, {}).get("task"):
             self.task_counts[typ] = self.task_counts.get(typ, 0) + 1
             self._emit("task_update", {
@@ -1710,13 +2110,31 @@ class Game:
         elif typ == "spread":
             player["spread_until"] = now + 7.0
         elif typ == "shield":
-            player["shield_until"] = now + 5.0
+            affected = 0
+            player_scene = self._entity_scene(player)
+            for teammate in self.players.values():
+                if teammate.get("dead"):
+                    continue
+                if self._entity_scene(teammate) != player_scene:
+                    continue
+                if math.hypot(teammate["x"] - player["x"], teammate["y"] - player["y"]) <= 380:
+                    teammate["shield_until"] = max(teammate.get("shield_until", 0), now + 5.8)
+                    affected += 1
+            item["amount"] = max(1, affected)
         elif typ == "medkit":
             player["hp"] = min(player["max_hp"], player.get("hp", player["max_hp"]) + 42)
-        elif typ == "ammo":
-            amount = random.randint(AMMO_PICKUP_MIN, AMMO_PICKUP_MAX)
-            player["reserve_ammo"] = min(self._max_reserve_for_player(player), player.get("reserve_ammo", 0) + amount)
+        elif typ == "ammo" or item_meta.get("ammo_type"):
+            ammo_type = item_meta.get("ammo_type") or ammo_type_for_weapon(player.get("weapon_id", "pistol"))
+            if typ == "ammo" and ammo_type == "explosive":
+                unlocked = set(self._unlocked_weapon_ids(player))
+                candidates = [ammo_type_for_weapon(wid) for wid in self._unlocked_weapon_ids(player) if wid != "launcher"]
+                ammo_type = random.choice(candidates or ["pistol"])
+            lo, hi = AMMO_PICKUP_BY_TYPE.get(ammo_type, (AMMO_PICKUP_MIN, AMMO_PICKUP_MAX))
+            amount = random.randint(lo, hi)
+            self._add_ammo_reserve(player, ammo_type, amount)
+            self._sync_weapon_fields(player)
             item["amount"] = amount
+            item["ammo_type"] = ammo_type
         elif typ == "parts":
             amount = random.randint(MATERIAL_PICKUP_MIN, MATERIAL_PICKUP_MAX)
             player["materials"] = player.get("materials", 0) + amount
@@ -1724,7 +2142,7 @@ class Game:
         elif typ == "nuke":
             self._nuke(sid, item["x"], item["y"], now)
         elif typ.startswith("weapon_"):
-            weapon_id = ITEM_TYPES.get(typ, {}).get("weapon")
+            weapon_id = item_meta.get("weapon")
             unlocked = self._unlock_weapon(player, weapon_id, now)
             if weapon_id:
                 self._switch_weapon(sid, player, weapon_id, now)
@@ -1742,7 +2160,7 @@ class Game:
                 "y": round(player["y"], 1),
                 "col": item["color"],
             }, [sid])
-        self._emit_near("item_pick", {
+        payload = {
             "pid": sid,
             "iid": item["id"],
             "type": typ,
@@ -1753,7 +2171,6 @@ class Game:
             "y": round(item["y"], 1),
             "amount": item.get("amount", 1),
             "ammo": player.get("ammo", 0),
-            "reserve": player.get("reserve_ammo", 0),
             "materials": player.get("materials", 0),
             "lore": player.get("lore", 0),
             "weaponLevel": player.get("weapon_level", 1),
@@ -1761,11 +2178,17 @@ class Game:
             "weaponName": weapon_meta(player.get("weapon_id", "pistol"))["name"],
             "weapons": self._unlocked_weapon_ids(player),
             "vehicle": now < player.get("vehicle_until", 0),
-        }, item["x"], item["y"], include=sid)
+        }
+        payload.update(self._current_ammo_payload(player, item.get("ammo_type")))
+        self._emit_near("item_pick", payload, item["x"], item["y"], include=sid, scene=item.get("scene", SCENE_MAIN))
 
     def _nuke(self, sid, x, y, now):
+        player = self.players.get(sid)
+        scene = self._entity_scene(player or {})
         killed = 0
         for zid, zombie in list(self.zombies.items()):
+            if self._entity_scene(zombie) != scene:
+                continue
             if math.hypot(zombie["x"] - x, zombie["y"] - y) <= NUKE_RADIUS:
                 killed += 1
                 self._kill_zombie(sid, zid, zombie, now, reason="nuke")
@@ -1776,25 +2199,33 @@ class Game:
             y,
             radius=NUKE_RADIUS + EVENT_INTEREST_RADIUS * 0.35,
             include=sid,
+            scene=scene,
         )
 
     def _try_drop_item(self, x, y, zombie=None):
         if len(self.items) >= MAX_ITEMS:
             return
         ztype = (zombie or {}).get("type")
-        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss") and random.random() < 0.16:
-            self.spawn_item(x, y, item_type="parts")
+        scene = self._entity_scene(zombie or {})
+        if ztype in ("warden", "boss") and random.random() < 0.34:
+            self.spawn_item(x, y, item_type=random.choice(("shield", "ammo_explosive", "parts")), scene=scene)
+            return
+        if ztype in ("screamer", "bloater", "spitter") and random.random() < 0.18:
+            self.spawn_item(x, y, item_type="shield", scene=scene)
+            return
+        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss", "warden") and random.random() < 0.16:
+            self.spawn_item(x, y, item_type="parts", scene=scene)
             return
         if ztype in ("runner", "crawler", "toxic") and random.random() < 0.14:
-            self.spawn_item(x, y, item_type="ammo")
+            self.spawn_item(x, y, item_type="ammo", scene=scene)
             return
         roll = random.random()
         if roll < 0.06:
-            self.spawn_item(x, y, item_type="ammo")
+            self.spawn_item(x, y, item_type="ammo", scene=scene)
         elif roll < 0.082:
-            self.spawn_item(x, y, item_type="parts")
+            self.spawn_item(x, y, item_type="parts", scene=scene)
         elif roll < 0.11:
-            self.spawn_item(x, y)
+            self.spawn_item(x, y, scene=scene)
 
     def _try_drop_task_item(self, zombie, now=None):
         if len(self.items) >= MAX_ITEMS:
@@ -1811,7 +2242,7 @@ class Game:
         elif random.random() < TASK_DROP_CHANCE * (0.92 if lab_boost else 0.42):
             item_type = "sample"
         if item_type:
-            self.spawn_item(zombie["x"], zombie["y"], item_type=item_type)
+            self.spawn_item(zombie["x"], zombie["y"], item_type=item_type, scene=self._entity_scene(zombie))
 
     def _item_pickup_reached(self, player, item):
         dx = player["x"] - item["x"]
@@ -1829,6 +2260,8 @@ class Game:
         for iid, item in list(self.items.items()):
             for sid, player in self.players.items():
                 if player.get("dead") or player.get("paused"):
+                    continue
+                if self._entity_scene(player) != self._entity_scene(item):
                     continue
                 if self._item_pickup_reached(player, item):
                     del self.items[iid]
@@ -1865,6 +2298,80 @@ class Game:
     def _near_room_effect(self, x, y, effect, padding=0):
         return any(self._feature_contains(room, x, y, padding=padding) for room in self._rooms_by_effect(effect))
 
+    def _enter_room_scene(self, sid, player, room, now):
+        if self._entity_scene(player) != SCENE_MAIN:
+            return False
+        if now < player.get("room_enter_cd", 0):
+            return False
+        scene_id = room.get("scene_id")
+        scene = self.room_scenes.get(scene_id or "")
+        if not scene:
+            return False
+        player["main_x"] = player["x"]
+        player["main_y"] = player["y"]
+        player["scene"] = scene_id
+        player["scene_name"] = scene.get("name", room.get("label", "设施"))
+        player["room_id"] = room.get("id", "")
+        player["facility_room_id"] = ""
+        player["facility_search"] = 0
+        player["x"], player["y"] = scene.get("spawn", (210, ROOM_H / 2))
+        player["vx"] = 0
+        player["vy"] = 0
+        player["keys"] = {}
+        player["shooting"] = False
+        player["room_enter_cd"] = now + 0.9
+        room["visited"] = True
+        self._emit_scene_change(sid, reason="enter_room")
+        self._emit_to("facility_pulse", {
+            "pid": sid,
+            "text": f"进入{room.get('label', '设施')}内部",
+            "x": round(player["x"], 1),
+            "y": round(player["y"], 1),
+            "col": "#aee6ff",
+            "facility": room.get("effect", ""),
+        }, [sid])
+        if room.get("effect") in ("lab", "morgue", "security"):
+            self._spawn_pressure_pack(1 + min(2, self.wave // 3), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+        return True
+
+    def _leave_room_scene(self, sid, player, now):
+        scene_id = self._entity_scene(player)
+        if scene_id == SCENE_MAIN:
+            return False
+        room = self._room_for_scene(scene_id)
+        player["scene"] = SCENE_MAIN
+        player["scene_name"] = "设施楼层"
+        player["room_id"] = ""
+        player["facility_room_id"] = ""
+        player["facility_search"] = 0
+        player["x"] = player.get("main_x", (room or {}).get("x", self.spawn_point[0]) + 26)
+        player["y"] = player.get("main_y", (room or {}).get("y", self.spawn_point[1]) + 26)
+        player["vx"] = 0
+        player["vy"] = 0
+        player["keys"] = {}
+        player["shooting"] = False
+        player["room_enter_cd"] = now + 1.1
+        self._emit_scene_change(sid, reason="leave_room")
+        self._emit_to("facility_pulse", {
+            "pid": sid,
+            "text": f"离开{(room or {}).get('label', '设施')}",
+            "x": round(player["x"], 1),
+            "y": round(player["y"], 1),
+            "col": "#aee6ff",
+            "facility": (room or {}).get("effect", ""),
+        }, [sid])
+        return True
+
+    def _room_exit_reached(self, player):
+        scene_id = self._entity_scene(player)
+        if scene_id == SCENE_MAIN:
+            return False
+        scene = self.room_scenes.get(scene_id)
+        if not scene:
+            return False
+        exit_point = scene.get("exit", {})
+        return math.hypot(player["x"] - exit_point.get("x", 0), player["y"] - exit_point.get("y", 0)) <= exit_point.get("radius", ROOM_DOOR_RADIUS) + PLAYER_R
+
     def _make_item_room_for_facility(self):
         if len(self.items) < MAX_ITEMS:
             return
@@ -1875,20 +2382,30 @@ class Game:
         if removable:
             self.items.pop(removable[0], None)
 
-    def _spawn_item_in_feature(self, feature, item_type, emit=True):
+    def _spawn_item_in_feature(self, feature, item_type, emit=True, scene=SCENE_MAIN):
         if not feature:
             return None
         self._make_item_room_for_facility()
         margin = ITEM_R + 12
+        if scene and scene != SCENE_MAIN:
+            scene_def = self._scene_def(scene)
+            loot = scene_def.get("loot", {"x": 240, "y": 160, "w": ROOM_W - 480, "h": ROOM_H - 320})
+            for _ in range(24):
+                x = random.uniform(loot["x"] + margin, loot["x"] + loot["w"] - margin)
+                y = random.uniform(loot["y"] + margin, loot["y"] + loot["h"] - margin)
+                if any(circ_rect(x, y, ITEM_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL + 4, scene=scene)):
+                    continue
+                return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
+            return self.spawn_item(scene=scene, item_type=item_type, emit=emit)
         for _ in range(24):
             x = random.uniform(feature["x"] + margin, feature["x"] + feature["w"] - margin)
             y = random.uniform(feature["y"] + margin, feature["y"] + feature["h"] - margin)
-            if any(circ_rect(x, y, ITEM_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL + 4)):
+            if any(circ_rect(x, y, ITEM_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL + 4, scene=scene)):
                 continue
-            return self.spawn_item(x, y, item_type=item_type, emit=emit)
+            return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
         x = feature["x"] + feature["w"] / 2
         y = feature["y"] + feature["h"] / 2
-        return self.spawn_item(x, y, item_type=item_type, emit=emit)
+        return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
 
     def _seed_facility_rewards(self):
         armories = self._rooms_by_effect("armory")
@@ -1952,7 +2469,14 @@ class Game:
             return
         room["next_reactor_at"] = now + 8.5
         self.lab_sample_until = max(self.lab_sample_until, now + 9.0)
-        spawned = self._spawn_pressure_pack(2 + min(3, self.wave // 2), now, urgent=True, allow_infection_source=True)
+        spawned = self._spawn_pressure_pack(
+            2 + min(3, self.wave // 2),
+            now,
+            urgent=True,
+            allow_infection_source=True,
+            origin=player,
+            scene=self._entity_scene(player),
+        )
         self._emit_to("lab_reactor", {
             "pid": sid,
             "text": f"样本库共振：特殊感染体样本掉落提升 9 秒，{spawned} 个感染信号靠近",
@@ -1981,13 +2505,25 @@ class Game:
                 player["facility_room_id"] = ""
                 player["facility_search"] = 0
                 continue
-            for feature in self.map_features:
+            scene_id = self._entity_scene(player)
+            scene_features = self.map_features if scene_id == SCENE_MAIN else self._scene_def(scene_id).get("features", [])
+            for feature in scene_features:
                 if feature.get("kind") == "pool" and self._feature_contains(feature, player["x"], player["y"], padding=PLAYER_R):
                     self._damage_player(sid, FACILITY_TOXIC_DAMAGE_PER_SEC * dt, now, source="toxic_pool")
                     player["facility_status"] = "污染区"
                     self._facility_notice(player, now, "地面污染正在灼伤你", "#b7ff47")
                     break
-            room = self._room_at(player["x"], player["y"], padding=PLAYER_R * 0.65)
+            if scene_id == SCENE_MAIN:
+                room = self._room_at(player["x"], player["y"], padding=PLAYER_R * 0.65)
+                if room:
+                    if room.get("scene_id"):
+                        self._enter_room_scene(sid, player, room, now)
+                        continue
+            else:
+                if self._room_exit_reached(player):
+                    self._leave_room_scene(sid, player, now)
+                    continue
+                room = self._room_for_scene(scene_id)
             if not room:
                 player["facility_room_id"] = ""
                 player["facility_search"] = 0
@@ -2021,7 +2557,7 @@ class Game:
                         room["alarm_spawned"] = True
                         self._trigger_fog_wave(now, reason="medbay", force=True, origin=player)
                     if random.random() < dt * 0.28:
-                        self._spawn_pressure_pack(1 + min(2, self.wave // 3), now, urgent=False, allow_infection_source=True)
+                        self._spawn_pressure_pack(1 + min(2, self.wave // 3), now, urgent=False, allow_infection_source=True, origin=player, scene=scene_id)
             elif effect == "generator":
                 player["facility_status"] = "可接入电力"
                 if room.get("searched"):
@@ -2030,6 +2566,7 @@ class Game:
                     self.task_counts["fuse"] = max(0, self.task_counts.get("fuse", 0) - 1)
                     room["searched"] = True
                     room["active"] = False
+                    self.power_on = True
                     revealed = self._reveal_one_exit(now, source="generator")
                     player["facility_status"] = "供电已恢复"
                     self._emit("task_update", {
@@ -2042,14 +2579,14 @@ class Game:
                         "y": round(player["y"], 1),
                         "col": "#66d9ff",
                     })
-                    self._emit("facility_used", {
+                    self._emit_to("facility_used", {
                         "pid": sid,
                         "facility": "generator",
                         "text": f"机房恢复供电{('，' + revealed['name'] + ' 已定位') if revealed else ''}",
                         "x": round(player["x"], 1),
                         "y": round(player["y"], 1),
                         "col": "#66d9ff",
-                    })
+                    }, [sid])
                     self._trigger_fog_wave(now, reason="generator", force=True, origin=player)
                 else:
                     self._facility_notice(player, now, "机房需要保险丝才能恢复供电", "#66d9ff")
@@ -2064,14 +2601,97 @@ class Game:
                     room["alarm_spawned"] = True
                     self._trigger_fog_wave(now, reason="lab", force=True, origin=player)
                 if random.random() < dt * 0.22:
-                    self._spawn_pressure_pack(1 + min(2, self.wave // 4), now, urgent=True, allow_infection_source=True)
+                    self._spawn_pressure_pack(1 + min(2, self.wave // 4), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+            elif effect == "archive":
+                if room.get("searched"):
+                    player["facility_search"] = 0
+                    player["facility_status"] = "档案已取走"
+                    self._facility_notice(player, now, "档案柜空了，广播还在重复你的名字", "#aee6ff")
+                    continue
+                player["facility_search"] = player.get("facility_search", 0) + dt
+                progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 1.18))
+                player["facility_status"] = f"检索档案 {round(progress * 100)}%"
+                if entered_room:
+                    self._trigger_fog_wave(now, reason="archive", force=True, origin=player)
+                if player["facility_search"] >= FACILITY_SEARCH_SECONDS * 1.18:
+                    player["facility_search"] = 0
+                    room["searched"] = True
+                    room["active"] = False
+                    player["lore"] = player.get("lore", 0) + 1
+                    file_text = CASE_FILES[(player["lore"] - 1) % len(CASE_FILES)]
+                    if random.random() < 0.55:
+                        self._reveal_one_exit(now, source="archive")
+                    self._emit_to("lore_found", {
+                        "pid": sid,
+                        "count": player["lore"],
+                        "text": file_text,
+                        "col": "#aee6ff",
+                    }, [sid])
+                    self._emit_to("facility_used", {
+                        "pid": sid,
+                        "facility": "archive",
+                        "text": "档案室找到黑匣碎片，雾里有东西听见了柜门声",
+                        "x": round(player["x"], 1),
+                        "y": round(player["y"], 1),
+                        "col": "#aee6ff",
+                    }, [sid])
+                    self._spawn_pressure_pack(2 + min(3, self.wave // 2), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+            elif effect == "security":
+                if room.get("searched"):
+                    player["facility_search"] = 0
+                    player["facility_status"] = "安保柜已空"
+                    self._facility_notice(player, now, "安保室已解锁过，警报仍在闪", "#d98cff")
+                    continue
+                player["facility_status"] = "需要门禁卡"
+                if entered_room:
+                    self._spawn_pressure_pack(2 + min(2, self.wave // 3), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                if self.task_counts.get("keycard", 0) <= 0:
+                    self._facility_notice(player, now, "安保柜需要门禁卡，附近感染体可能携带", "#d98cff")
+                    continue
+                self.task_counts["keycard"] = max(0, self.task_counts.get("keycard", 0) - 1)
+                room["searched"] = True
+                room["active"] = False
+                reward = "parts" if random.random() < 0.55 else self._armory_reward_type(player)
+                self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
+                revealed = self._reveal_one_exit(now, source="security")
+                player["facility_status"] = "安保柜已开"
+                self._emit("task_update", {
+                    "pid": sid,
+                    "type": "keycard",
+                    "name": "门禁卡",
+                    "count": self.task_counts.get("keycard", 0),
+                    "task": self._task_summary(),
+                    "x": round(player["x"], 1),
+                    "y": round(player["y"], 1),
+                    "col": "#d98cff",
+                })
+                self._emit_to("facility_used", {
+                    "pid": sid,
+                    "facility": "security",
+                    "text": f"安保柜打开{('，' + revealed['name'] + ' 已定位') if revealed else ''}",
+                    "x": round(player["x"], 1),
+                    "y": round(player["y"], 1),
+                    "col": "#d98cff",
+                }, [sid])
+                self._trigger_fog_wave(now, reason="security", force=True, origin=player)
+            elif effect == "morgue":
+                player["facility_status"] = "尸袋低语"
+                self.lab_sample_until = max(self.lab_sample_until, now + 4.0)
+                self._damage_player(sid, FACILITY_TOXIC_DAMAGE_PER_SEC * 0.42 * dt, now, source="morgue")
+                if entered_room:
+                    self._facility_notice(player, now, "停尸间提高样本掉落，但尸袋开始动了", "#b7ff47")
+                    self._spawn_pressure_pack(3 + min(3, self.wave // 2), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                    if random.random() < 0.72:
+                        self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
+                elif random.random() < dt * 0.18:
+                    self._spawn_pressure_pack(1, now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
             elif effect == "armory":
                 if room.get("searched"):
                     player["facility_search"] = 0
                     player["facility_status"] = "柜门已空"
                     self._facility_notice(player, now, "仓库已经搜空，别在这里久留", "#ffc247")
                     if random.random() < dt * 0.08:
-                        self._spawn_pressure_pack(1, now, urgent=True, allow_infection_source=True)
+                        self._spawn_pressure_pack(1, now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / FACILITY_SEARCH_SECONDS)
@@ -2079,7 +2699,7 @@ class Game:
                 if player["facility_search"] >= FACILITY_SEARCH_SECONDS:
                     player["facility_search"] = 0
                     reward = room.pop("pending_reward", None) or self._armory_reward_type(player)
-                    iid = self._spawn_item_in_feature(room, reward, emit=True)
+                    iid = self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
                     room["searched"] = True
                     room["active"] = False
                     meta = ITEM_TYPES.get(reward, {})
@@ -2101,8 +2721,11 @@ class Game:
         if speed < self._player_speed(player) * 0.45:
             return
         hit = None
+        scene = self._entity_scene(player)
         for zid, zombie in self._zombies_near(zombie_grid, player["x"], player["y"], PLAYER_R + 72):
             if zid not in self.zombies:
+                continue
+            if self._entity_scene(zombie) != scene:
                 continue
             dist = math.hypot(zombie["x"] - player["x"], zombie["y"] - player["y"])
             if dist <= PLAYER_R + zombie.get("radius", 16) + 36:
@@ -2120,7 +2743,8 @@ class Game:
         dist = math.hypot(dx, dy) or 1
         zombie["x"], zombie["y"] = self.move_col(
             zombie["x"], zombie["y"], zombie.get("radius", 16),
-            dx / dist * 70, dy / dist * 70
+            dx / dist * 70, dy / dist * 70,
+            scene=scene,
         )
         self._emit_near("vehicle_hit", {
             "pid": sid,
@@ -2129,7 +2753,7 @@ class Game:
             "y": round(zombie["y"], 1),
             "damage": round(damage, 1),
             "col": "#ffc247",
-        }, zombie["x"], zombie["y"], include=sid)
+        }, zombie["x"], zombie["y"], include=sid, scene=scene)
         if zombie["hp"] <= 0:
             self._kill_zombie(sid, zid, zombie, now, reason="vehicle")
 
@@ -2150,28 +2774,32 @@ class Game:
         if player.get("dead") or player.get("reload_until", 0) > now:
             return False
         wid, meta, state = self._sync_weapon_fields(player)
+        ammo_type = meta.get("ammo_type", "pistol")
         mag_size = player.get("mag_size", meta["mag_size"])
-        if player.get("ammo", 0) >= mag_size or player.get("reserve_ammo", 0) <= 0:
+        reserve = self._ammo_reserve(player, ammo_type)
+        if player.get("ammo", 0) >= mag_size or reserve <= 0:
             if manual and now >= player.get("dry_until", 0):
                 player["dry_until"] = now + 0.45
-                self._emit_to("ammo_empty", {
+                payload = {
                     "pid": sid,
                     "ammo": player.get("ammo", 0),
-                    "reserve": player.get("reserve_ammo", 0),
-                }, [sid])
+                }
+                payload.update(self._current_ammo_payload(player, ammo_type))
+                self._emit_to("ammo_empty", payload, [sid])
             return False
         player["shooting"] = False
         duration = meta.get("reload_seconds", RELOAD_SECONDS)
         player["reload_until"] = now + duration
-        self._emit_to("reload_start", {
+        payload = {
             "pid": sid,
             "duration": duration,
             "ammo": player.get("ammo", 0),
-            "reserve": player.get("reserve_ammo", 0),
             "weapon": wid,
             "weaponName": meta["name"],
             "magSize": mag_size,
-        }, [sid])
+        }
+        payload.update(self._current_ammo_payload(player, ammo_type))
+        self._emit_to("reload_start", payload, [sid])
         return True
 
     def _finish_reload(self, player, now):
@@ -2179,22 +2807,25 @@ class Game:
             return
         player["reload_until"] = 0
         wid, meta, state = self._sync_weapon_fields(player)
+        ammo_type = meta.get("ammo_type", "pistol")
         mag_size = player.get("mag_size", meta["mag_size"])
         needed = max(0, mag_size - player.get("ammo", 0))
-        loaded = min(needed, player.get("reserve_ammo", 0))
+        reserve = self._ammo_reserve(player, ammo_type)
+        loaded = min(needed, reserve)
         player["ammo"] = player.get("ammo", 0) + loaded
-        player["reserve_ammo"] = max(0, player.get("reserve_ammo", 0) - loaded)
+        self._set_ammo_reserve(player, ammo_type, reserve - loaded)
         state["ammo"] = player["ammo"]
-        self._emit_to("reload_done", {
+        payload = {
             "pid": player["id"],
             "ammo": player.get("ammo", 0),
-            "reserve": player.get("reserve_ammo", 0),
             "weapon": wid,
             "weaponName": meta["name"],
             "magSize": mag_size,
-        }, [player["id"]])
+        }
+        payload.update(self._current_ammo_payload(player, ammo_type))
+        self._emit_to("reload_done", payload, [player["id"]])
 
-    def _segment_blocked(self, x1, y1, x2, y2, radius=3):
+    def _segment_blocked(self, x1, y1, x2, y2, radius=3, scene=SCENE_MAIN):
         dist = math.hypot(x2 - x1, y2 - y1)
         if dist <= 0.01:
             return False
@@ -2202,7 +2833,7 @@ class Game:
         search_r = dist / 2 + MAZE_WALL + radius
         mx = (x1 + x2) / 2
         my = (y1 + y2) / 2
-        obstacles = list(self._near_obstacles(mx, my, search_r))
+        obstacles = list(self._near_obstacles(mx, my, search_r, scene=scene))
         for i in range(1, steps):
             t = i / steps
             px = x1 + (x2 - x1) * t
@@ -2215,11 +2846,14 @@ class Game:
         zombie_grid = zombie_grid or self._build_grid(self.zombies)
         px = player["x"]
         py = player["y"]
+        scene = self._entity_scene(player)
         aim = player.get("aim_angle", 0)
         best = None
         query_r = PLAYER_R + reach + 42
         for zid, zombie in self._zombies_near(zombie_grid, px, py, query_r):
             if zid not in self.zombies:
+                continue
+            if self._entity_scene(zombie) != scene:
                 continue
             dx = zombie["x"] - px
             dy = zombie["y"] - py
@@ -2231,7 +2865,7 @@ class Game:
                 delta = ((math.atan2(dy, dx) - aim + math.pi) % (math.pi * 2)) - math.pi
                 if abs(delta) > MELEE_ARC / 2:
                     continue
-            if self._segment_blocked(px, py, zombie["x"], zombie["y"]):
+            if self._segment_blocked(px, py, zombie["x"], zombie["y"], scene=scene):
                 continue
             score = dist
             if best is None or score < best[0]:
@@ -2261,7 +2895,8 @@ class Game:
         zombie["last_hit_by"] = sid
         zombie["x"], zombie["y"] = self.move_col(
             zombie["x"], zombie["y"], zombie.get("radius", 16),
-            ux * MELEE_KNOCKBACK, uy * MELEE_KNOCKBACK
+            ux * MELEE_KNOCKBACK, uy * MELEE_KNOCKBACK,
+            scene=self._entity_scene(zombie),
         )
         self._emit_near("melee_swing", {
             "pid": sid,
@@ -2274,7 +2909,7 @@ class Game:
             "hit": True,
             "damage": round(damage, 1),
             "col": player["color"],
-        }, player["x"], player["y"], include=sid)
+        }, player["x"], player["y"], include=sid, scene=self._entity_scene(player))
         if zombie["hp"] <= 0:
             self._kill_zombie(sid, zid, zombie, now, reason="melee")
         return True
@@ -2289,6 +2924,7 @@ class Game:
         if player.get("reload_until", 0) > now:
             return
         wid, meta, state = self._sync_weapon_fields(player)
+        ammo_type = meta.get("ammo_type", "pistol")
         interval = meta.get("fire_interval", FIRE_INTERVAL) * (RAPID_FIRE_MULT if now < player.get("rapid_until", 0) else 1)
         if now < player.get("fire_cd", 0):
             return
@@ -2297,26 +2933,28 @@ class Game:
             if not self._try_reload(sid, player, now):
                 if now >= player.get("dry_until", 0):
                     player["dry_until"] = now + 0.55
-                    self._emit_to("ammo_empty", {
+                    payload = {
                         "pid": sid,
                         "ammo": player.get("ammo", 0),
-                        "reserve": player.get("reserve_ammo", 0),
                         "weapon": wid,
                         "weaponName": meta["name"],
-                    }, [sid])
+                    }
+                    payload.update(self._current_ammo_payload(player, ammo_type))
+                    self._emit_to("ammo_empty", payload, [sid])
             return
         player["fire_cd"] = now + interval
         player["ammo"] = max(0, player.get("ammo", 0) - ammo_cost)
         state["ammo"] = player["ammo"]
-        self._emit_to("shot_fired", {
+        payload = {
             "pid": sid,
             "ammo": player.get("ammo", 0),
-            "reserve": player.get("reserve_ammo", 0),
             "weapon": wid,
             "weaponName": meta["name"],
             "magSize": player.get("mag_size", meta["mag_size"]),
             "pellets": meta.get("pellets", 1),
-        }, [sid])
+        }
+        payload.update(self._current_ammo_payload(player, ammo_type))
+        self._emit_to("shot_fired", payload, [sid])
         base_angle = player.get("aim_angle", 0)
         pellets = max(1, int(meta.get("pellets", 1)))
         spread = float(meta.get("spread", 0.0))
@@ -2342,6 +2980,7 @@ class Game:
                 "id": bid,
                 "owner": sid,
                 "weapon": wid,
+                "scene": self._entity_scene(player),
                 "x": muzzle_x,
                 "y": muzzle_y,
                 "spawn_x": muzzle_x,
@@ -2362,6 +3001,7 @@ class Game:
                 ),
                 "explosion_radius": meta.get("explosion_radius", 0),
                 "explosion_damage": meta.get("explosion_damage", meta.get("damage", BULLET_DAMAGE)),
+                "boss_damage_mult": meta.get("boss_damage_mult", 1.0),
                 "pierce": meta.get("pierce", 0),
                 "hit_ids": set(),
                 "color": meta.get("color") or player["color"],
@@ -2370,6 +3010,7 @@ class Game:
     def _update_bullets(self, dt, now):
         zombie_grid = self._build_grid(self.zombies)
         for bid, bullet in list(self.bullets.items()):
+            scene = self._entity_scene(bullet)
             newborn = bullet.get("born_tick") == self.tick_id
             if not newborn:
                 bullet["life"] -= dt
@@ -2377,12 +3018,15 @@ class Game:
                 bullet["prev_y"] = bullet["y"]
                 bullet["x"] += bullet["vx"] * dt
                 bullet["y"] += bullet["vy"] * dt
-            if bullet["life"] <= 0 or bullet["x"] < -40 or bullet["x"] > MAP_W + 40 or bullet["y"] < -40 or bullet["y"] > MAP_H + 40:
+            scene_def = self._scene_def(scene)
+            mw = scene_def.get("mw", MAP_W)
+            mh = scene_def.get("mh", MAP_H)
+            if bullet["life"] <= 0 or bullet["x"] < -40 or bullet["x"] > mw + 40 or bullet["y"] < -40 or bullet["y"] > mh + 40:
                 if bullet.get("explosion_radius", 0) > 0 and bullet["life"] <= 0:
                     self._explode_projectile(bullet, now)
                 self.bullets.pop(bid, None)
                 continue
-            if any(pt_in_rect(bullet["x"], bullet["y"], o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(bullet["x"], bullet["y"], bullet["radius"] + MAZE_WALL)):
+            if any(pt_in_rect(bullet["x"], bullet["y"], o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(bullet["x"], bullet["y"], bullet["radius"] + MAZE_WALL, scene=scene)):
                 if bullet.get("explosion_radius", 0) > 0:
                     self._explode_projectile(bullet, now)
                 self.bullets.pop(bid, None)
@@ -2393,6 +3037,8 @@ class Game:
             for zid, zombie in self._zombies_near(zombie_grid, bullet["x"], bullet["y"], bullet["radius"] + 34):
                 if zid not in self.zombies:
                     continue
+                if self._entity_scene(zombie) != scene:
+                    continue
                 if zid in bullet.get("hit_ids", set()):
                     continue
                 if math.hypot(bullet["x"] - zombie["x"], bullet["y"] - zombie["y"]) <= bullet["radius"] + zombie["radius"]:
@@ -2402,7 +3048,10 @@ class Game:
             if hit_id is None:
                 continue
 
-            hit_zombie["hp"] -= bullet["damage"]
+            damage = bullet["damage"]
+            if hit_zombie.get("type") == "boss":
+                damage *= bullet.get("boss_damage_mult", 1.0)
+            hit_zombie["hp"] -= damage
             hit_zombie["last_hit_by"] = bullet["owner"]
             bullet.setdefault("hit_ids", set()).add(hit_id)
             if bullet.get("explosion_radius", 0) > 0:
@@ -2420,6 +3069,7 @@ class Game:
         if radius <= 0:
             return
         owner = bullet.get("owner")
+        scene = self._entity_scene(bullet)
         damage = bullet.get("explosion_damage", bullet.get("damage", BULLET_DAMAGE))
         x = bullet["x"]
         y = bullet["y"]
@@ -2429,13 +3079,16 @@ class Game:
             "y": round(y, 1),
             "r": radius,
             "col": bullet.get("color", "#ff8844"),
-        }, x, y, radius=radius + EVENT_INTEREST_RADIUS * 0.35, include=owner)
+        }, x, y, radius=radius + EVENT_INTEREST_RADIUS * 0.35, include=owner, scene=scene)
         for zid, zombie in list(self.zombies.items()):
+            if self._entity_scene(zombie) != scene:
+                continue
             dist = math.hypot(zombie["x"] - x, zombie["y"] - y)
             if dist > radius + zombie.get("radius", 16):
                 continue
             scale = 1 - min(0.72, dist / max(1, radius) * 0.62)
-            zombie["hp"] -= damage * scale
+            boss_mult = bullet.get("boss_damage_mult", 1.0) if zombie.get("type") == "boss" else 1.0
+            zombie["hp"] -= damage * scale * boss_mult
             zombie["last_hit_by"] = owner
             if zombie["hp"] <= 0:
                 self._kill_zombie(owner, zid, zombie, now, reason="blast")
@@ -2471,14 +3124,18 @@ class Game:
             "y": round(y, 1),
             "r": BLOATER_RADIUS,
             "col": ZOMBIE_TYPES["bloater"]["color"],
-        }, x, y, radius=BLOATER_RADIUS + EVENT_INTEREST_RADIUS * 0.5, include=sid)
+        }, x, y, radius=BLOATER_RADIUS + EVENT_INTEREST_RADIUS * 0.5, include=sid, scene=self._entity_scene(zombie))
 
         for psid, player in list(self.players.items()):
+            if self._entity_scene(player) != self._entity_scene(zombie):
+                continue
             if math.hypot(player["x"] - x, player["y"] - y) <= BLOATER_RADIUS + PLAYER_R:
                 self._damage_player(psid, BLOATER_PLAYER_DAMAGE, now, source=f"bloater:{zid}")
 
         for other_id, other in list(self.zombies.items()):
             if other_id not in self.zombies:
+                continue
+            if self._entity_scene(other) != self._entity_scene(zombie):
                 continue
             if math.hypot(other["x"] - x, other["y"] - y) > BLOATER_RADIUS + other.get("radius", 16):
                 continue
@@ -2509,13 +3166,16 @@ class Game:
         player["reload_until"] = 0
         player["vehicle_until"] = 0
         player["vehicle_ram_cd"] = 0
-        self._emit("p_die", {
+        player["lives"] = max(0, int(player.get("lives", PLAYER_STAGE_LIVES)) - 1)
+        self._emit_near("p_die", {
             "pid": sid,
             "killer": killer,
             "x": round(player["x"], 1),
             "y": round(player["y"], 1),
             "col": player["color"],
-        })
+            "lives": player.get("lives", 0),
+            "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
+        }, player["x"], player["y"], include=sid, scene=self._entity_scene(player))
 
     def _try_dash(self, sid, player, now):
         if player.get("dead") or player.get("paused") or now < player.get("dash_cd", 0):
@@ -2528,8 +3188,9 @@ class Game:
         dash_steps = 4
         step_dist = DASH_DIST / dash_steps
         cx, cy = player["x"], player["y"]
+        scene = self._entity_scene(player)
         for _ in range(dash_steps):
-            cx, cy = self.move_col(cx, cy, PLAYER_R, dx * step_dist, dy * step_dist)
+            cx, cy = self.move_col(cx, cy, PLAYER_R, dx * step_dist, dy * step_dist, scene=scene)
         player["x"], player["y"] = cx, cy
         player["vx"] = dx * self._player_speed(player) * 0.22
         player["vy"] = dy * self._player_speed(player) * 0.22
@@ -2542,7 +3203,7 @@ class Game:
             "y": round(player["y"], 1),
             "cd": DASH_CD,
             "col": player["color"],
-        }, player["x"], player["y"], include=sid)
+        }, player["x"], player["y"], include=sid, scene=scene)
 
     def _update_players(self, dt, now):
         zombie_grid = None
@@ -2578,7 +3239,7 @@ class Game:
             if abs(player["vy"]) < 0.01:
                 player["vy"] = 0
             if player["vx"] or player["vy"]:
-                player["x"], player["y"] = self.move_col(player["x"], player["y"], PLAYER_R, player["vx"] * dt, player["vy"] * dt)
+                player["x"], player["y"] = self.move_col(player["x"], player["y"], PLAYER_R, player["vx"] * dt, player["vy"] * dt, scene=self._entity_scene(player))
                 if vehicle_active:
                     if zombie_grid is None:
                         zombie_grid = self._build_grid(self.zombies)
@@ -2592,7 +3253,10 @@ class Game:
 
     def _zombie_target(self, zombie, alive, now):
         candidates = []
+        scene = self._entity_scene(zombie)
         for player in alive:
+            if self._entity_scene(player) != scene:
+                continue
             d2 = (player["x"] - zombie["x"]) ** 2 + (player["y"] - zombie["y"]) ** 2
             candidates.append((d2, {
                 "id": player["id"],
@@ -2615,7 +3279,8 @@ class Game:
         step = speed * dt
         direct_vx = math.cos(base_angle) * speed
         direct_vy = math.sin(base_angle) * speed
-        direct_x, direct_y = self.move_col(zombie["x"], zombie["y"], zombie["radius"], direct_vx * dt, direct_vy * dt)
+        scene = self._entity_scene(zombie)
+        direct_x, direct_y = self.move_col(zombie["x"], zombie["y"], zombie["radius"], direct_vx * dt, direct_vy * dt, scene=scene)
         direct_moved = math.hypot(direct_x - zombie["x"], direct_y - zombie["y"])
         direct_d2 = (target["x"] - direct_x) ** 2 + (target["y"] - direct_y) ** 2
         blocked = direct_moved < step * 0.72 or direct_d2 >= dist * dist - step * 0.45
@@ -2632,7 +3297,7 @@ class Game:
             angle = base_angle + offset
             vx = math.cos(angle) * speed
             vy = math.sin(angle) * speed
-            nx, ny = self.move_col(zombie["x"], zombie["y"], zombie["radius"], vx * dt, vy * dt)
+            nx, ny = self.move_col(zombie["x"], zombie["y"], zombie["radius"], vx * dt, vy * dt, scene=scene)
             moved = math.hypot(nx - zombie["x"], ny - zombie["y"])
             if moved < min(ZOMBIE_STUCK_EPS, step * 0.35):
                 continue
@@ -2644,7 +3309,7 @@ class Game:
             sidestep = base_angle + random.choice((-1, 1)) * math.pi / 2
             vx = math.cos(sidestep) * speed * 0.58
             vy = math.sin(sidestep) * speed * 0.58
-            nx, ny = self.move_col(zombie["x"], zombie["y"], zombie["radius"], vx * dt, vy * dt)
+            nx, ny = self.move_col(zombie["x"], zombie["y"], zombie["radius"], vx * dt, vy * dt, scene=scene)
             if math.hypot(nx - zombie["x"], ny - zombie["y"]) < step * 0.25:
                 zombie["stuck_for"] = zombie.get("stuck_for", 0) + dt
                 zombie["path_time"] = 0
@@ -2668,6 +3333,8 @@ class Game:
         for other_id, other in self.zombies.items():
             if other_id == zid:
                 continue
+            if self._entity_scene(other) != self._entity_scene(zombie):
+                continue
             if math.hypot(other["x"] - zombie["x"], other["y"] - zombie["y"]) > SCREAMER_RADIUS + other.get("radius", 16):
                 continue
             other["rally_until"] = max(other.get("rally_until", 0), now + SCREAMER_RALLY_SECONDS)
@@ -2679,7 +3346,7 @@ class Game:
             "r": SCREAMER_RADIUS,
             "buffed": rallied,
             "col": ZOMBIE_TYPES["screamer"]["color"],
-        }, zombie["x"], zombie["y"])
+        }, zombie["x"], zombie["y"], scene=self._entity_scene(zombie))
 
     def _maybe_leap_speed(self, zombie, target, speed, dist, now):
         if zombie["type"] != "leaper":
@@ -2694,19 +3361,118 @@ class Game:
             "x": round(target["x"], 1),
             "y": round(target["y"], 1),
             "col": ZOMBIE_TYPES["leaper"]["color"],
-        }, zombie["x"], zombie["y"])
+        }, zombie["x"], zombie["y"], scene=self._entity_scene(zombie))
         return speed * LEAPER_SPEED_MULT
+
+    def _maybe_spit(self, zid, zombie, target, dist, now):
+        if zombie["type"] != "spitter":
+            return
+        if dist < 150 or dist > 560 or now < zombie.get("spit_cd", 0):
+            return
+        if self._segment_blocked(zombie["x"], zombie["y"], target["x"], target["y"], radius=4, scene=self._entity_scene(zombie)):
+            return
+        zombie["spit_cd"] = now + 2.4 + random.random() * 0.8
+        self._damage_player(target["id"], 14 + min(8, self.wave), now, source=f"spitter:{zid}")
+        self._emit_near("z_spit", {
+            "zid": zid,
+            "pid": target["id"],
+            "x": round(zombie["x"], 1),
+            "y": round(zombie["y"], 1),
+            "tx": round(target["x"], 1),
+            "ty": round(target["y"], 1),
+            "col": ZOMBIE_TYPES["spitter"]["color"],
+        }, zombie["x"], zombie["y"], scene=self._entity_scene(zombie))
+
+    def _maybe_boss_phase(self, zid, zombie, now):
+        if zombie["type"] != "boss":
+            return
+        hp_ratio = zombie.get("hp", 0) / max(1, zombie.get("max_hp", 1))
+        phase = 0
+        if hp_ratio <= 0.4:
+            phase = 2
+        elif hp_ratio <= 0.7:
+            phase = 1
+        if phase <= zombie.get("phase", 0):
+            return
+        zombie["phase"] = phase
+        zombie["rally_until"] = max(zombie.get("rally_until", 0), now + 5.0)
+        summon_plan = ("stalker", "spitter", "runner") if phase == 1 else ("warden", "stalker", "screamer", "bloater")
+        spawned = 0
+        scene = self._entity_scene(zombie)
+        for index in range(4 + phase * 3 + min(4, self.wave // 2)):
+            if len(self.zombies) >= MAX_ZOMBIES:
+                break
+            ztype = summon_plan[index % len(summon_plan)]
+            if self.wave < ZOMBIE_TYPES[ztype].get("unlock", 1):
+                ztype = "runner"
+            x, y = self.safe_fog_spawn(origin=zombie, scene=scene)
+            new_id = self.spawn_zombie(x=x, y=y, ztype=ztype, pressure=True, scene=scene)
+            if not new_id:
+                continue
+            spawned += 1
+            self.zombies[new_id]["rally_until"] = max(self.zombies[new_id].get("rally_until", 0), now + 2.8)
+        self._emit_near("boss_phase", {
+            "zid": zid,
+            "phase": phase,
+            "spawned": spawned,
+            "x": round(zombie["x"], 1),
+            "y": round(zombie["y"], 1),
+            "hp": round(max(0, zombie.get("hp", 0)), 1),
+            "maxHp": zombie.get("max_hp", 1),
+            "col": zombie.get("color", "#d9445f"),
+            "text": "黑墙巨像撕开墙体，新的感染体从雾里挤出。",
+        }, zombie["x"], zombie["y"], radius=EVENT_INTEREST_RADIUS * 1.4, scene=scene)
+
+    def _maybe_boss_slam(self, zid, zombie, target, dist, now):
+        if zombie["type"] != "boss":
+            return
+        if now < zombie.get("slam_cd", 0):
+            return
+        phase = zombie.get("phase", 0)
+        radius = 190 + phase * 44
+        if dist > radius + 70:
+            zombie["slam_cd"] = now + max(2.4, 4.2 - phase * 0.55)
+            return
+        zombie["slam_cd"] = now + max(2.2, 4.0 - phase * 0.6)
+        hit = 0
+        scene = self._entity_scene(zombie)
+        for sid, player in self.players.items():
+            if player.get("dead") or player.get("paused"):
+                continue
+            if self._entity_scene(player) != scene:
+                continue
+            pd = math.hypot(player["x"] - zombie["x"], player["y"] - zombie["y"])
+            if pd <= radius + PLAYER_R:
+                hit += 1
+                self._damage_player(sid, 18 + phase * 8 + min(8, self.wave), now, source=f"boss_slam:{zid}")
+                dx = player["x"] - zombie["x"]
+                dy = player["y"] - zombie["y"]
+                mag = math.hypot(dx, dy) or 1
+                player["x"], player["y"] = self.move_col(player["x"], player["y"], PLAYER_R, dx / mag * 48, dy / mag * 48, scene=scene)
+        self._emit_near("boss_slam", {
+            "zid": zid,
+            "phase": phase,
+            "hit": hit,
+            "x": round(zombie["x"], 1),
+            "y": round(zombie["y"], 1),
+            "r": radius,
+            "col": zombie.get("color", "#d9445f"),
+        }, zombie["x"], zombie["y"], scene=scene)
 
     def _apply_route_reward(self, now, exit_point):
         reward = self._route_reward_payload(exit_point)
         route = reward.get("route")
         affected = 0
         if route == "service":
-            amount = 42 + min(24, self.wave * 3)
+            amounts = self._service_ammo_reward_amounts()
             for player in self.players.values():
-                player["reserve_ammo"] = min(self._max_reserve_for_player(player), player.get("reserve_ammo", 0) + amount)
+                for ammo_type, amount in amounts.items():
+                    self._add_ammo_reserve(player, ammo_type, amount)
+                self._sync_weapon_fields(player)
                 affected += 1
-            reward["amount"] = amount
+            reward["amount"] = sum(amounts.values())
+            reward["ammo"] = dict(amounts)
+            reward["rewardText"] = self._ammo_reward_text(amounts)
         elif route == "lab":
             self.next_stage_reveal = True
             for sid, player in self.players.items():
@@ -2730,6 +3496,21 @@ class Game:
                         break
                 affected += 1
             reward["amount"] = amount
+        elif route == "archive":
+            for sid, player in self.players.items():
+                self._add_ammo_reserve(player, "explosive", 1)
+                player["shield_until"] = max(player.get("shield_until", 0), now + 6.0)
+                player["lore"] = player.get("lore", 0) + 1
+                file_text = CASE_FILES[(player["lore"] - 1) % len(CASE_FILES)]
+                self._emit_to("lore_found", {
+                    "pid": sid,
+                    "count": player["lore"],
+                    "text": file_text,
+                    "col": player["color"],
+                }, [sid])
+                affected += 1
+            reward["amount"] = 1
+            self._trigger_fog_wave(now, reason="archive", force=True)
         reward["affected"] = affected
         return reward
 
@@ -2844,15 +3625,29 @@ class Game:
             self.next_stage_reveal = False
         for sid, player in self.players.items():
             sx, sy = self.safe_player_spawn()
+            player["scene"] = SCENE_MAIN
+            player["scene_name"] = "设施楼层"
+            player["room_id"] = ""
+            player["main_x"] = sx
+            player["main_y"] = sy
+            player["facility_room_id"] = ""
             player["x"] = sx
             player["y"] = sy
             player["vx"] = 0
             player["vy"] = 0
             player["paused"] = False
             player["dead"] = False
+            player["lives"] = player.get("max_lives", PLAYER_STAGE_LIVES)
             player["hp"] = min(player["max_hp"], max(player.get("hp", player["max_hp"]), player["max_hp"] * 0.72))
             player["protect_until"] = now + PROTECT
-            self._emit("p_resp", {"pid": sid, "x": sx, "y": sy, "hp": round(player["hp"], 1)})
+            self._emit("p_resp", {
+                "pid": sid,
+                "x": sx,
+                "y": sy,
+                "hp": round(player["hp"], 1),
+                "lives": player.get("lives", PLAYER_STAGE_LIVES),
+                "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
+            })
         stage_zombies = min(INITIAL_ZOMBIES + self.wave * 5, self.wave_remaining)
         for _ in range(stage_zombies):
             if self.spawn_zombie(emit=False, pressure=True):
@@ -2865,6 +3660,9 @@ class Game:
                 self.spawn_item(item_type="ammo", emit=False)
         if route_reward and route_reward.get("route") == "security":
             self.spawn_item(item_type="parts", emit=False)
+        if route_reward and route_reward.get("route") == "archive":
+            self.spawn_item(item_type="shield", emit=False)
+            self.spawn_item(item_type="ammo_explosive", emit=False)
         self._emit("wave_start", {
             "wave": self.wave,
             "remaining": self.wave_remaining,
@@ -2933,7 +3731,7 @@ class Game:
             return
         alive_players = [
             (sid, player) for sid, player in self.players.items()
-            if not player.get("dead") and not player.get("paused")
+            if not player.get("dead") and not player.get("paused") and self._entity_scene(player) == SCENE_MAIN
         ]
         for exit_point in self.extractions:
             if exit_point.get("done"):
@@ -3005,7 +3803,10 @@ class Game:
                 return
 
     def _update_zombies(self, dt, now):
-        alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
+        alive = [
+            p for p in self.players.values()
+            if not p.get("dead") and not p.get("paused")
+        ]
         if not alive:
             return
         for zid, zombie in list(self.zombies.items()):
@@ -3018,7 +3819,15 @@ class Game:
             self._maybe_scream(zid, zombie, now)
             dx = target["x"] - zombie["x"]
             dy = target["y"] - zombie["y"]
-            speed = self._maybe_leap_speed(zombie, target, speed, math.hypot(dx, dy), now)
+            dist_to_target = math.hypot(dx, dy)
+            self._maybe_spit(zid, zombie, target, dist_to_target, now)
+            self._maybe_boss_phase(zid, zombie, now)
+            self._maybe_boss_slam(zid, zombie, target, dist_to_target, now)
+            if zombie["type"] == "boss":
+                speed *= 1 + zombie.get("phase", 0) * 0.24
+                if dist_to_target > 520:
+                    speed *= 1.18
+            speed = self._maybe_leap_speed(zombie, target, speed, dist_to_target, now)
             waypoint = self._zombie_waypoint(zombie, target, now)
             vx, vy, nx, ny, dist = self._steer_zombie(zombie, waypoint, speed, dt)
             zombie["target"] = target["id"]
@@ -3035,7 +3844,10 @@ class Game:
         if self.director_timer < DIRECTOR_CHECK_DT:
             return
         self.director_timer = 0.0
-        alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
+        alive = [
+            p for p in self.players.values()
+            if not p.get("dead") and not p.get("paused") and self._entity_scene(p) == SCENE_MAIN
+        ]
         watch_points = alive[:]
         if not watch_points:
             return
@@ -3044,7 +3856,11 @@ class Game:
         near_sq = ZOMBIE_INTEREST_RADIUS * ZOMBIE_INTEREST_RADIUS
         near_count = 0
         relocated = 0
+        main_zombies = 0
         for zid, zombie in list(self.zombies.items()):
+            if self._entity_scene(zombie) != SCENE_MAIN:
+                continue
+            main_zombies += 1
             min_d2 = min((point["x"] - zombie["x"]) ** 2 + (point["y"] - zombie["y"]) ** 2 for point in watch_points)
             if min_d2 <= near_sq:
                 near_count += 1
@@ -3081,7 +3897,7 @@ class Game:
             DIRECTOR_MAX_NEAR_ZOMBIES,
             max(DIRECTOR_MIN_NEAR_ZOMBIES, max(1, len(alive)) * DIRECTOR_NEAR_ZOMBIES_PER_PLAYER),
         )
-        if near_count <= max(3, int(desired * 0.36)) and len(self.zombies) <= desired:
+        if near_count <= max(3, int(desired * 0.36)) and main_zombies <= desired:
             if self._trigger_fog_wave(now, reason="silence"):
                 return
         if self.wave_remaining <= 0:
@@ -3100,7 +3916,7 @@ class Game:
                 self.wave_remaining -= 1
 
     def _spawn_wave_burst(self):
-        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead")))
+        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead") and self._entity_scene(player) == SCENE_MAIN))
         budget = min(
             WAVE_BURST_MAX,
             WAVE_BURST_BASE + alive_count * WAVE_BURST_PER_PLAYER + self.wave * 2,
@@ -3114,8 +3930,11 @@ class Game:
             ("toxic", 1),
             ("armored", 2),
             ("leaper", 2),
+            ("stalker", 2),
+            ("spitter", 2),
             ("screamer", 3),
             ("bloater", 3),
+            ("warden", 4),
         )
         scripted_offset = 1 if self._is_boss_wave() else 0
         for i in range(max(0, budget)):
@@ -3171,11 +3990,12 @@ class Game:
         if self.zombie_spawn_timer < ZOMBIE_SPAWN_DT:
             return
         self.zombie_spawn_timer = 0.0
-        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead")))
+        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead") and self._entity_scene(player) == SCENE_MAIN))
+        main_zombies = sum(1 for zombie in self.zombies.values() if self._entity_scene(zombie) == SCENE_MAIN)
         target_near = min(DIRECTOR_MAX_NEAR_ZOMBIES, DIRECTOR_MIN_NEAR_ZOMBIES + alive_count * 5 + self.wave * 2)
         budget = min(
             8 + min(6, self.wave),
-            max(5, target_near - len(self.zombies) // 2),
+            max(5, target_near - main_zombies // 2),
             self.wave_remaining,
             MAX_ZOMBIES - len(self.zombies),
         )
@@ -3204,6 +4024,85 @@ class Game:
             if now - player.get("last_seen", player.get("last_input", now)) > PLAYER_STALE_TIMEOUT:
                 self.remove_player(sid)
                 self._emit("p_leave", {"pid": sid, "reason": "timeout"})
+
+    def _grant_emergency_ammo(self, player):
+        if player.get("ammo", 0) + self._ammo_reserve(player) > 0:
+            return
+        self._add_ammo_reserve(player, ammo_type_for_weapon(player.get("weapon_id", "pistol")), self._weapon_mag_size(player))
+
+    def _respawn_player(self, pid, player, now):
+        sx, sy = self.safe_player_spawn()
+        old_scene = self._entity_scene(player)
+        player["scene"] = SCENE_MAIN
+        player["scene_name"] = "设施楼层"
+        player["room_id"] = ""
+        player["main_x"] = sx
+        player["main_y"] = sy
+        player["facility_room_id"] = ""
+        player["x"] = sx
+        player["y"] = sy
+        player["vx"] = 0
+        player["vy"] = 0
+        player["hp"] = player["max_hp"]
+        player["dead"] = False
+        player["protect_until"] = now + PROTECT
+        self._grant_emergency_ammo(player)
+        self._sync_weapon_fields(player)
+        self._emit("p_resp", {
+            "pid": pid,
+            "x": sx,
+            "y": sy,
+            "hp": player["hp"],
+            "lives": player.get("lives", PLAYER_STAGE_LIVES),
+            "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
+        })
+        if old_scene != SCENE_MAIN:
+            self._emit_scene_change(pid, reason="respawn")
+
+    def _restart_current_stage(self, now, reason="wipe"):
+        self.zombies.clear()
+        self.bullets.clear()
+        self.items.clear()
+        self.wave_remaining = self._wave_budget()
+        self.infection_source_remaining = self._infection_source_budget()
+        self.wave_kills = 0
+        self.next_fog_wave_at = now + 5.0
+        self.fog_active_until = 0.0
+        self._gen_obstacles()
+        self._start_stage_tasks()
+        for pid, player in self.players.items():
+            player["lives"] = player.get("max_lives", PLAYER_STAGE_LIVES)
+            player["paused"] = False
+            self._respawn_player(pid, player, now)
+        stage_zombies = min(INITIAL_ZOMBIES + self.wave * 5, self.wave_remaining)
+        for _ in range(stage_zombies):
+            if self.spawn_zombie(emit=False, pressure=True):
+                self.wave_remaining -= 1
+        self._spawn_wave_burst()
+        for _ in range(INITIAL_ITEMS):
+            self.spawn_item(emit=False)
+        self._emit("stage_failed", {
+            "wave": self.wave,
+            "reason": reason,
+            "lives": PLAYER_STAGE_LIVES,
+            "obj": self._objective_snapshot(),
+            "mission": self._mission_snapshot(),
+            "exits": self._extractions_snapshot(),
+            "obs": self.obstacles,
+            "features": self.map_features,
+        })
+        self._emit("wave_start", {
+            "wave": self.wave,
+            "remaining": self.wave_remaining,
+            "boss": self._is_boss_wave(),
+            "story": self._story_for_wave(),
+            "stage": self.stage_director,
+            "obj": self._objective_snapshot(),
+            "mission": self._mission_snapshot(),
+            "exits": self._extractions_snapshot(),
+            "obs": self.obstacles,
+            "features": self.map_features,
+        })
 
     def tick(self, dt=SERVER_DT, now=None):
         perf_start = time.perf_counter()
@@ -3235,19 +4134,15 @@ class Game:
             self._update_bullets(dt, now)
             self._collect_items(now)
 
+            deaths_pending = []
             for pid, player in self.players.items():
                 if player.get("dead") and now - player.get("death_time", now) > 2.3:
-                    sx, sy = self.safe_player_spawn()
-                    player["x"] = sx
-                    player["y"] = sy
-                    player["vx"] = 0
-                    player["vy"] = 0
-                    player["hp"] = player["max_hp"]
-                    player["dead"] = False
-                    player["protect_until"] = now + PROTECT
-                    if player.get("ammo", 0) + player.get("reserve_ammo", 0) <= 0:
-                        player["reserve_ammo"] = self._weapon_mag_size(player)
-                    self._emit("p_resp", {"pid": pid, "x": sx, "y": sy, "hp": player["hp"]})
+                    if player.get("lives", 0) > 0:
+                        self._respawn_player(pid, player, now)
+                    else:
+                        deaths_pending.append(pid)
+            if deaths_pending and all(player.get("dead") for player in self.players.values()):
+                self._restart_current_stage(now, reason="wipe")
         finally:
             self._record_tick_perf(perf_start)
 
@@ -3287,7 +4182,10 @@ class Game:
             "last_melee_at": -999,
             "ammo": MAG_SIZE,
             "mag_size": MAG_SIZE,
-            "reserve_ammo": START_RESERVE_AMMO,
+            "current_reserve": START_AMMO_RESERVE["pistol"],
+            "ammo_reserve": dict(START_AMMO_RESERVE),
+            "lives": PLAYER_STAGE_LIVES,
+            "max_lives": PLAYER_STAGE_LIVES,
             "materials": 0,
             "lore": 0,
             "talents": {},
@@ -3302,6 +4200,12 @@ class Game:
             "vehicle_ram_cd": 0,
             "vehicle_end_notified": False,
             "paused": False,
+            "scene": SCENE_MAIN,
+            "scene_name": "设施楼层",
+            "room_id": "",
+            "main_x": sx,
+            "main_y": sy,
+            "room_enter_cd": 0.0,
             "facility_room_id": "",
             "facility_label": "",
             "facility_status": "",
@@ -3437,7 +4341,7 @@ class Game:
             max_hp,
             player.get("ammo", MAG_SIZE),
             player.get("mag_size", MAG_SIZE),
-            player.get("reserve_ammo", 0),
+            player.get("current_reserve", self._ammo_reserve(player, ammo_type_for_weapon(wid))),
             player.get("materials", 0),
             player.get("lore", 0),
             player.get("weapon_level", 1),
@@ -3449,6 +4353,13 @@ class Game:
             round(vehicle_left, 2),
             player.get("facility_label", ""),
             player.get("facility_status", ""),
+            self._ammo_pool_snapshot(player),
+            ammo_type_for_weapon(wid),
+            AMMO_TYPE_LABELS.get(ammo_type_for_weapon(wid), "备用弹"),
+            player.get("lives", PLAYER_STAGE_LIVES),
+            player.get("max_lives", PLAYER_STAGE_LIVES),
+            self._entity_scene(player),
+            player.get("scene_name", "设施楼层"),
         ]
 
     def _zombie_tuple(self, zombie):
@@ -3506,6 +4417,7 @@ class Game:
             "type": zombie["type"],
             "color": zombie["color"],
             "radius": zombie["radius"],
+            "sceneId": self._entity_scene(zombie),
         }
 
     def _item_event(self, iid, item):
@@ -3518,14 +4430,18 @@ class Game:
             "icon": item["icon"],
             "name": item["name"],
             "radius": item["radius"],
+            "sceneId": self._entity_scene(item),
         }
 
     def _near_player_tuples(self, sid, viewer, player_tuples):
         candidates = []
         radius_sq = PLAYER_INTEREST_RADIUS * PLAYER_INTEREST_RADIUS
+        scene = self._entity_scene(viewer)
         for pid, player in self.players.items():
             if pid == sid:
                 candidates.append((0.0, pid))
+                continue
+            if self._entity_scene(player) != scene:
                 continue
             d2 = (player["x"] - viewer["x"]) ** 2 + (player["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
@@ -3538,7 +4454,10 @@ class Game:
     def _limited_zombies_near(self, grid, viewer):
         radius_sq = ZOMBIE_INTEREST_RADIUS * ZOMBIE_INTEREST_RADIUS
         candidates = []
+        scene = self._entity_scene(viewer)
         for zid, zombie in self._zombies_near(grid, viewer["x"], viewer["y"], ZOMBIE_INTEREST_RADIUS):
+            if self._entity_scene(zombie) != scene:
+                continue
             d2 = (zombie["x"] - viewer["x"]) ** 2 + (zombie["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
                 candidates.append((d2, zid, zombie))
@@ -3550,7 +4469,10 @@ class Game:
     def _limited_bullets_near(self, viewer):
         radius_sq = BULLET_INTEREST_RADIUS * BULLET_INTEREST_RADIUS
         candidates = []
+        scene = self._entity_scene(viewer)
         for bid, bullet in self.bullets.items():
+            if self._entity_scene(bullet) != scene:
+                continue
             d2 = (bullet["x"] - viewer["x"]) ** 2 + (bullet["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
                 candidates.append((d2, bid, bullet))
@@ -3562,7 +4484,10 @@ class Game:
     def _limited_items_near(self, viewer):
         radius_sq = ITEM_INTEREST_RADIUS * ITEM_INTEREST_RADIUS
         candidates = []
+        scene = self._entity_scene(viewer)
         for iid, item in self.items.items():
+            if self._entity_scene(item) != scene:
+                continue
             d2 = (item["x"] - viewer["x"]) ** 2 + (item["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
                 candidates.append((d2, iid, item))
@@ -3592,11 +4517,13 @@ class Game:
     def _snapshot_payload(self, sid, now, player_tuples, zombie_grid, leaderboard):
         if sid and sid in self.players:
             viewer = self.players[sid]
+            scene_def = self._scene_def(self._entity_scene(viewer))
             players = self._near_player_tuples(sid, viewer, player_tuples)
             zombies = self._limited_zombies_near(zombie_grid, viewer)
             bullets = self._limited_bullets_near(viewer)
             items = self._limited_items_near(viewer)
         else:
+            scene_def = self._scene_def(SCENE_MAIN)
             players = player_tuples
             zombies = {zid: self._zombie_tuple(zombie) for zid, zombie in self.zombies.items()}
             bullets = {bid: self._bullet_tuple(bullet) for bid, bullet in self.bullets.items()}
@@ -3605,6 +4532,10 @@ class Game:
             "v": PROTOCOL_VERSION,
             "tick": self.tick_id,
             "time": round(now, 3),
+            "scene": scene_def.get("id", SCENE_MAIN),
+            "sceneName": scene_def.get("name", "设施楼层"),
+            "mw": scene_def.get("mw", MAP_W),
+            "mh": scene_def.get("mh", MAP_H),
             "p": players,
             "z": zombies,
             "b": bullets,
@@ -3655,10 +4586,15 @@ class Game:
 
     def get_init_data(self, sid, idx):
         now = self._now()
+        player = self.players.get(sid, {})
+        scene_def = self._scene_def(self._entity_scene(player))
+        scene_is_main = scene_def.get("id") == SCENE_MAIN
         return {
             "v": PROTOCOL_VERSION,
             "tick": self.tick_id,
             "time": round(now, 3),
+            "scene": scene_def.get("id", SCENE_MAIN),
+            "sceneName": scene_def.get("name", "设施楼层"),
             "id": sid,
             "col": player_color(idx),
             "nm": player_name(idx),
@@ -3672,7 +4608,9 @@ class Game:
                 "fireInterval": FIRE_INTERVAL,
                 "bulletSpeed": BULLET_SPEED,
                 "magSize": MAG_SIZE,
-                "maxReserveAmmo": MAX_RESERVE_AMMO,
+                "maxReserveByType": MAX_RESERVE_BY_TYPE,
+                "ammoTypeLabels": AMMO_TYPE_LABELS,
+                "stageLives": PLAYER_STAGE_LIVES,
                 "reloadSeconds": RELOAD_SECONDS,
                 "muzzleForward": MUZZLE_FORWARD,
                 "weaponOrder": WEAPON_ORDER,
@@ -3684,20 +4622,36 @@ class Game:
                 "serverTickHz": SERVER_TICK_HZ,
                 "snapshotHz": SNAPSHOT_HZ,
             },
-            "mw": MAP_W,
-            "mh": MAP_H,
-            "obs": self.obstacles,
-            "features": self.map_features,
-            "z": {zid: self._zombie_tuple(zombie) for zid, zombie in self.zombies.items()},
-            "b": {bid: self._bullet_tuple(bullet) for bid, bullet in self.bullets.items()},
-            "i": {iid: self._item_tuple(item) for iid, item in self.items.items()},
-            "pl": {pid: self._player_tuple(player, now) for pid, player in self.players.items()},
+            "mw": scene_def.get("mw", MAP_W),
+            "mh": scene_def.get("mh", MAP_H),
+            "obs": self.obstacles if scene_is_main else scene_def.get("obs", []),
+            "features": self.map_features if scene_is_main else scene_def.get("features", []),
+            "z": {
+                zid: self._zombie_tuple(zombie)
+                for zid, zombie in self.zombies.items()
+                if self._entity_scene(zombie) == scene_def.get("id", SCENE_MAIN)
+            },
+            "b": {
+                bid: self._bullet_tuple(bullet)
+                for bid, bullet in self.bullets.items()
+                if self._entity_scene(bullet) == scene_def.get("id", SCENE_MAIN)
+            },
+            "i": {
+                iid: self._item_tuple(item)
+                for iid, item in self.items.items()
+                if self._entity_scene(item) == scene_def.get("id", SCENE_MAIN)
+            },
+            "pl": {
+                pid: self._player_tuple(other, now)
+                for pid, other in self.players.items()
+                if self._entity_scene(other) == scene_def.get("id", SCENE_MAIN)
+            },
             "w": self.wave,
             "wr": self.wave_remaining,
             "lb": self._leaderboard(),
             "stage": self.stage_director,
             "obj": self._objective_snapshot(),
-            "mission": self._mission_snapshot(),
-            "exits": self._extractions_snapshot(),
+            "mission": self._mission_snapshot() if scene_is_main else None,
+            "exits": self._extractions_snapshot() if scene_is_main else [],
             "intermission": self._intermission_snapshot(sid),
         }

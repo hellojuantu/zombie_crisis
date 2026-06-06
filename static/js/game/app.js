@@ -1,7 +1,7 @@
-import { createAudio } from './audio.js?v=39';
-import { createEffects } from './effects.js?v=39';
-import { createRenderer } from './render.js?v=39';
-import { createUI } from './ui.js?v=39';
+import { createAudio } from './audio.js?v=41';
+import { createEffects } from './effects.js?v=41';
+import { createRenderer } from './render.js?v=41';
+import { createUI } from './ui.js?v=41';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
 
@@ -103,6 +103,8 @@ let camView = { x: 0, y: 0 };
 let training = { move: false, aim: false, shoot: false, objective: false };
 
 const state = {
+  scene: 'main',
+  sceneName: '设施楼层',
   mw: mapW,
   mh: mapH,
   obs: [],
@@ -143,7 +145,12 @@ const me = {
   fireCd: 0,
   ammo: 24,
   magSize: 24,
-  reserveAmmo: 108,
+  currentReserve: 108,
+  ammoPools: { pistol: 108, rifle: 0, smg: 0, shell: 0, explosive: 0 },
+  ammoType: 'pistol',
+  ammoTypeName: '手枪弹',
+  lives: 3,
+  maxLives: 3,
   materials: 0,
   lore: 0,
   weaponLevel: 1,
@@ -154,6 +161,8 @@ const me = {
   vehicleCd: 0,
   facility: '',
   facilityStatus: '',
+  sceneId: 'main',
+  sceneName: '设施楼层',
   reloadCd: 0,
   xp: 0,
   radius: playerRadius,
@@ -238,7 +247,12 @@ function applyPlayer(target, next) {
   target.fireCd = next.fireCd;
   target.ammo = next.ammo;
   target.magSize = next.magSize;
-  target.reserveAmmo = next.reserveAmmo;
+  target.currentReserve = next.currentReserve;
+  target.ammoPools = next.ammoPools || {};
+  target.ammoType = next.ammoType || 'pistol';
+  target.ammoTypeName = next.ammoTypeName || '手枪弹';
+  target.lives = next.lives;
+  target.maxLives = next.maxLives;
   target.materials = next.materials;
   target.lore = next.lore;
   target.weaponLevel = next.weaponLevel;
@@ -249,6 +263,8 @@ function applyPlayer(target, next) {
   target.vehicleCd = next.vehicleCd;
   target.facility = next.facility;
   target.facilityStatus = next.facilityStatus;
+  target.sceneId = next.sceneId || 'main';
+  target.sceneName = next.sceneName || '设施楼层';
   target.reloadCd = next.reloadCd;
   target.xp = next.xp;
   target.ack = next.ack;
@@ -261,6 +277,8 @@ function applyPlayer(target, next) {
 }
 
 function resetState() {
+  state.scene = 'main';
+  state.sceneName = '设施楼层';
   state.obs = [];
   state.features = [];
   state.pl = {};
@@ -279,6 +297,40 @@ function resetState() {
   state.exits = [];
   state.intermission = null;
   effects.clear();
+}
+
+function sceneMatches(data = {}) {
+  return !data.sceneId || data.sceneId === state.scene || data.sceneId === me.sceneId;
+}
+
+function applyScenePayload(data = {}, clearEntities = true) {
+  state.scene = data.scene || 'main';
+  state.sceneName = data.sceneName || (state.scene === 'main' ? '设施楼层' : '设施内部');
+  me.sceneId = state.scene;
+  me.sceneName = state.sceneName;
+  mapW = data.mw || mapW;
+  mapH = data.mh || mapH;
+  state.mw = mapW;
+  state.mh = mapH;
+  predictor.config.mapW = mapW;
+  predictor.config.mapH = mapH;
+  if (data.obs) state.obs = data.obs;
+  if (data.features) state.features = data.features;
+  if ('mission' in data) state.mission = data.mission || null;
+  if (data.exits) state.exits = data.exits;
+  if (data.obj) state.obj = Object.assign({}, state.obj || {}, data.obj);
+  if (clearEntities) {
+    const mine = state.pl[myId];
+    state.z = {};
+    state.b = {};
+    state.items = {};
+    state.pl = mine ? { [myId]: mine } : {};
+    state.zt = 0;
+    state.bt = 0;
+    state.it = 0;
+    effects.clear();
+    predictor.clear();
+  }
 }
 
 function resetTraining() {
@@ -556,15 +608,35 @@ function applyWeaponEvent(data) {
   if (Array.isArray(data.weapons)) me.weapons = data.weapons;
   if (Number.isFinite(data.magSize)) me.magSize = data.magSize;
   if (Number.isFinite(data.ammo)) me.ammo = data.ammo;
-  if (Number.isFinite(data.reserve)) me.reserveAmmo = data.reserve;
+  if (Number.isFinite(data.currentReserve)) me.currentReserve = data.currentReserve;
+  if (data.ammoPools)
+    me.ammoPools = typeof data.ammoPools === 'string' ? parseAmmoPools(data.ammoPools) : data.ammoPools;
+  if (data.ammoType) me.ammoType = data.ammoType;
+  if (data.ammoTypeName) me.ammoTypeName = data.ammoTypeName;
   if (state.pl[myId]) {
     state.pl[myId].weapon = me.weapon;
     state.pl[myId].weaponName = me.weaponName;
     state.pl[myId].weapons = me.weapons;
     state.pl[myId].magSize = me.magSize;
     state.pl[myId].ammo = me.ammo;
-    state.pl[myId].reserveAmmo = me.reserveAmmo;
+    state.pl[myId].currentReserve = me.currentReserve;
+    state.pl[myId].ammoPools = me.ammoPools;
+    state.pl[myId].ammoType = me.ammoType;
+    state.pl[myId].ammoTypeName = me.ammoTypeName;
   }
+}
+
+function parseAmmoPools(value) {
+  const pools = {};
+  String(value || '')
+    .split(',')
+    .filter(Boolean)
+    .forEach((entry) => {
+      const [key, raw] = entry.split(':');
+      const amount = Number(raw);
+      if (key && Number.isFinite(amount)) pools[key] = amount;
+    });
+  return pools;
 }
 
 function updateLatency(rtt) {
@@ -714,10 +786,7 @@ function setupSocket() {
     const syncT = clockSync.sampleTime(data.time, performance.now());
     resetState();
     resetTraining();
-    state.mw = mapW;
-    state.mh = mapH;
-    state.obs = data.obs || [];
-    state.features = data.features || [];
+    applyScenePayload(data, false);
     state.wave = data.w || 1;
     state.wr = data.wr || 0;
     state.lb = data.lb || [];
@@ -735,6 +804,8 @@ function setupSocket() {
 
     const p = state.pl[myId];
     Object.assign(me, p);
+    me.sceneId = p.sceneId || state.scene;
+    me.sceneName = p.sceneName || state.sceneName;
     me.maxHp = p.maxHp || hpMaxForLevel(me.level);
     visualMe.x = me.x;
     visualMe.y = me.y;
@@ -764,6 +835,18 @@ function setupSocket() {
 
   sock.on('sync', (data) => {
     const syncT = clockSync.sampleTime(data.time, performance.now());
+    if (data.scene && data.scene !== state.scene) {
+      state.scene = data.scene;
+      state.sceneName = data.sceneName || state.sceneName;
+      me.sceneId = state.scene;
+      me.sceneName = state.sceneName;
+      mapW = data.mw || mapW;
+      mapH = data.mh || mapH;
+      state.mw = mapW;
+      state.mh = mapH;
+      predictor.config.mapW = mapW;
+      predictor.config.mapH = mapH;
+    }
     for (const pid of Object.keys(data.p || {})) {
       const next = mkP(pid, data.p[pid]);
       if (!state.pl[pid]) state.pl[pid] = seedSamples(next, syncT);
@@ -781,7 +864,12 @@ function setupSocket() {
           fireCd: next.fireCd,
           ammo: next.ammo,
           magSize: next.magSize,
-          reserveAmmo: next.reserveAmmo,
+          currentReserve: next.currentReserve,
+          ammoPools: next.ammoPools || {},
+          ammoType: next.ammoType || 'pistol',
+          ammoTypeName: next.ammoTypeName || '手枪弹',
+          lives: next.lives,
+          maxLives: next.maxLives,
           materials: next.materials,
           lore: next.lore,
           weaponLevel: next.weaponLevel,
@@ -792,6 +880,8 @@ function setupSocket() {
           vehicleCd: next.vehicleCd,
           facility: next.facility,
           facilityStatus: next.facilityStatus,
+          sceneId: next.sceneId || 'main',
+          sceneName: next.sceneName || '设施楼层',
           reloadCd: next.reloadCd,
           xp: next.xp,
           ack: next.ack,
@@ -881,6 +971,27 @@ function setupSocket() {
     state.intermission = data.intermission || null;
   });
 
+  sock.on('scene_change', (data) => {
+    if (data.pid && data.pid !== myId) return;
+    applyScenePayload(data, true);
+    me.x = Number.isFinite(data.x) ? data.x : me.x;
+    me.y = Number.isFinite(data.y) ? data.y : me.y;
+    visualMe.x = me.x;
+    visualMe.y = me.y;
+    visualMe.ready = true;
+    if (!state.pl[myId]) state.pl[myId] = seedSamples(Object.assign({ id: myId }, me));
+    state.pl[myId].x = me.x;
+    state.pl[myId].y = me.y;
+    state.pl[myId].sceneId = state.scene;
+    state.pl[myId].sceneName = state.sceneName;
+    snapCamera();
+    ui.notify(
+      data.reason === 'leave_room' ? '返回设施走廊' : `进入${state.sceneName}`,
+      data.reason === 'leave_room' ? '#aee6ff' : '#ffcc66',
+    );
+    audio.facility(data.reason === 'leave_room' ? '' : 'lab');
+  });
+
   sock.on('p_join', (data) => {
     if (data.pid === myId) return;
     state.pl[data.pid] = seedSamples({
@@ -905,7 +1016,12 @@ function setupSocket() {
       fireCd: 0,
       ammo: 24,
       magSize: 24,
-      reserveAmmo: 108,
+      currentReserve: 108,
+      ammoPools: { pistol: 108, rifle: 0, smg: 0, shell: 0, explosive: 0 },
+      ammoType: 'pistol',
+      ammoTypeName: '手枪弹',
+      lives: 3,
+      maxLives: 3,
       materials: 0,
       lore: 0,
       weaponLevel: 1,
@@ -916,6 +1032,8 @@ function setupSocket() {
       vehicleCd: 0,
       facility: '',
       facilityStatus: '',
+      sceneId: 'main',
+      sceneName: '设施楼层',
       reloadCd: 0,
       xp: 0,
       ack: 0,
@@ -927,6 +1045,7 @@ function setupSocket() {
   });
   sock.on('p_leave', (data) => delete state.pl[data.pid]);
   sock.on('z_spawn', (data) => {
+    if (!sceneMatches(data)) return;
     const z = {
       x: data.x,
       y: data.y,
@@ -946,12 +1065,21 @@ function setupSocket() {
     }
   });
   sock.on('boss_spawn', (data) => {
+    if (!sceneMatches(data)) return;
     ui.notify(`${data.name || 'Boss'} 出现`, data.color || '#ff4d7a');
     effects.ring(data.x, data.y, 150, data.color || '#ff4d7a', 0.68, 5);
     effects.particlesAt(data.x, data.y, data.color || '#ff4d7a', 36, 230, 0.58, 4.4);
     audio.boss();
   });
+  sock.on('boss_phase', (data) => {
+    if (!sceneMatches(data)) return;
+    ui.notify(data.text || `Boss 进入第 ${data.phase || 1} 阶段`, data.col || '#ff4d7a');
+    effects.ring(data.x, data.y, 210 + (data.phase || 1) * 42, data.col || '#ff4d7a', 0.8, 6);
+    effects.particlesAt(data.x, data.y, data.col || '#ff4d7a', 52, 280, 0.72, 5);
+    audio.boss();
+  });
   sock.on('fog_wave', (data) => {
+    if (!sceneMatches(data)) return;
     const duration = data.duration || 4.8;
     state.fog = {
       until: performance.now() + duration * 1000,
@@ -984,27 +1112,44 @@ function setupSocket() {
     audio.fogWave(data.reason || 'director');
   });
   sock.on('z_leap', (data) => {
+    if (!sceneMatches(data)) return;
     effects.tracer(data.sx, data.sy, data.x, data.y, data.col || '#ffb347');
     effects.ring(data.sx, data.sy, 46, data.col || '#ffb347', 0.24, 3);
     audio.leaper();
   });
   sock.on('z_scream', (data) => {
+    if (!sceneMatches(data)) return;
     effects.ring(data.x, data.y, data.r || 260, data.col || '#d88cff', 0.38, 4);
     effects.particlesAt(data.x, data.y, data.col || '#d88cff', Math.min(28, 8 + (data.buffed || 0)), 140, 0.32, 2.6);
     audio.screamer();
   });
+  sock.on('z_spit', (data) => {
+    if (!sceneMatches(data)) return;
+    effects.tracer(data.x, data.y, data.tx, data.ty, data.col || '#7fdc71');
+    effects.ring(data.tx, data.ty, 34, data.col || '#7fdc71', 0.24, 3);
+    audio.hit();
+  });
+  sock.on('boss_slam', (data) => {
+    if (!sceneMatches(data)) return;
+    effects.ring(data.x, data.y, data.r || 210, data.col || '#ff4d7a', 0.52, 6);
+    effects.particlesAt(data.x, data.y, data.col || '#ff4d7a', 34, 220, 0.46, 4);
+    audio.explosion();
+  });
   sock.on('z_explode', (data) => {
+    if (!sceneMatches(data)) return;
     effects.ring(data.x, data.y, data.r || 150, data.col || '#ff8f52', 0.58, 5);
     effects.particlesAt(data.x, data.y, data.col || '#ff8f52', 34, 230, 0.5, 4.1);
     audio.explosion();
   });
   sock.on('grenade_explode', (data) => {
+    if (!sceneMatches(data)) return;
     effects.ring(data.x, data.y, data.r || 150, data.col || '#ff8844', 0.58, 5);
     effects.particlesAt(data.x, data.y, data.col || '#ff8844', 36, 240, 0.5, 4.2);
     audio.explosion();
     if (data.pid === myId) audio.hit();
   });
   sock.on('z_die', (data) => {
+    if (!sceneMatches(data)) return;
     const old = state.z[data.zid];
     const x = data.x ?? old?.x ?? 0;
     const y = data.y ?? old?.y ?? 0;
@@ -1045,6 +1190,7 @@ function setupSocket() {
     effects.particlesAt(data.x, data.y, data.col || '#dce7f1', 18, 130, 0.38, 3);
   });
   sock.on('i_spawn', (data) => {
+    if (!sceneMatches(data)) return;
     state.items[data.id] = {
       x: data.x,
       y: data.y,
@@ -1056,12 +1202,12 @@ function setupSocket() {
     };
   });
   sock.on('item_pick', (data) => {
+    if (!sceneMatches(data)) return;
     delete state.items[data.iid];
     effects.ring(data.x, data.y, 46, data.col || '#fff', 0.38, 3);
     effects.particlesAt(data.x, data.y, data.col || '#fff', 16, 120, 0.38, 3);
     if (data.pid === myId) {
       if (Number.isFinite(data.ammo)) me.ammo = data.ammo;
-      if (Number.isFinite(data.reserve)) me.reserveAmmo = data.reserve;
       if (Number.isFinite(data.materials)) me.materials = data.materials;
       if (Number.isFinite(data.lore)) me.lore = data.lore;
       if (Number.isFinite(data.weaponLevel)) me.weaponLevel = data.weaponLevel;
@@ -1076,9 +1222,11 @@ function setupSocket() {
   sock.on('ammo_empty', (data) => {
     if (data.pid !== myId) return;
     me.ammo = data.ammo || 0;
-    me.reserveAmmo = data.reserve || 0;
     applyWeaponEvent(data);
-    ui.notify(data.reserve > 0 ? '换弹中' : '弹药耗尽', data.reserve > 0 ? '#dce7f1' : '#ff6666');
+    ui.notify(
+      me.currentReserve > 0 ? '换弹中' : `${me.ammoTypeName || '弹药'}耗尽`,
+      me.currentReserve > 0 ? '#dce7f1' : '#ff6666',
+    );
     audio.empty();
   });
   sock.on('shot_fired', (data) => {
@@ -1091,7 +1239,6 @@ function setupSocket() {
     if (data.pid !== myId) return;
     me.reloadCd = data.duration || 1;
     me.ammo = data.ammo || 0;
-    me.reserveAmmo = data.reserve || 0;
     applyWeaponEvent(data);
     shooting = false;
     ui.notify('换弹', '#dce7f1');
@@ -1154,6 +1301,7 @@ function setupSocket() {
     ui.notify('载具失效', '#aeb7c2');
   });
   sock.on('vehicle_hit', (data) => {
+    if (!sceneMatches(data)) return;
     effects.ring(data.x, data.y, 44, data.col || '#ffc247', 0.24, 4);
     effects.particlesAt(data.x, data.y, data.col || '#ffc247', 14, 150, 0.24, 3.2);
     if (data.pid === myId) audio.explosion();
@@ -1173,6 +1321,7 @@ function setupSocket() {
     audio.fogWave('lab');
   });
   sock.on('facility_used', (data) => {
+    if (!sceneMatches(data)) return;
     if (data.pid === myId) ui.notify(data.text || '设施已使用', data.col || '#aee6ff');
     effects.ring(data.x, data.y, 76, data.col || '#aee6ff', 0.46, 4);
     audio.facility(data.facility || '');
@@ -1190,6 +1339,7 @@ function setupSocket() {
     if (data.type === 'shield') me.prot = false;
   });
   sock.on('nuke', (data) => {
+    if (!sceneMatches(data)) return;
     effects.ring(data.x, data.y, data.r, '#ff8844', 0.62, 5);
     effects.particlesAt(data.x, data.y, '#ffcc66', 42, 260, 0.55, 4);
     if (data.pid === myId) ui.notify(`清场 ${data.kills}`, '#ffcc66');
@@ -1245,6 +1395,7 @@ function setupSocket() {
     if (data?.ending) audio.stage(true);
   });
   sock.on('p_dash', (data) => {
+    if (!sceneMatches(data)) return;
     if (data.pid === myId) {
       if (Math.hypot(data.x - me.x, data.y - me.y) > 82) {
         me.x = data.x;
@@ -1258,6 +1409,7 @@ function setupSocket() {
     effects.tracer(data.sx, data.sy, data.x, data.y, data.col || '#fff');
   });
   sock.on('melee_swing', (data) => {
+    if (!sceneMatches(data)) return;
     const col = data.col || '#dce7f1';
     effects.slash(data.x, data.y, data.angle || 0, 72, col, 0.16);
     if (data.hit) effects.particlesAt(data.tx, data.ty, '#dce7f1', 10, 120, 0.22, 2.4);
@@ -1269,6 +1421,8 @@ function setupSocket() {
   sock.on('p_die', (data) => {
     if (data.pid === myId) {
       me.dead = true;
+      me.lives = Number.isFinite(data.lives) ? data.lives : me.lives;
+      me.maxLives = Number.isFinite(data.maxLives) ? data.maxLives : me.maxLives;
       shooting = false;
       audio.playerDeath();
     }
@@ -1281,6 +1435,8 @@ function setupSocket() {
       me.x = data.x;
       me.y = data.y;
       me.hp = data.hp || me.maxHp;
+      me.lives = Number.isFinite(data.lives) ? data.lives : me.lives;
+      me.maxLives = Number.isFinite(data.maxLives) ? data.maxLives : me.maxLives;
       me.dead = false;
       visualMe.x = data.x;
       visualMe.y = data.y;
@@ -1291,6 +1447,8 @@ function setupSocket() {
       snapObject(state.pl[data.pid], data.x, data.y);
       state.pl[data.pid].dead = false;
       state.pl[data.pid].hp = data.hp || 100;
+      state.pl[data.pid].lives = Number.isFinite(data.lives) ? data.lives : state.pl[data.pid].lives;
+      state.pl[data.pid].maxLives = Number.isFinite(data.maxLives) ? data.maxLives : state.pl[data.pid].maxLives;
     }
     effects.ring(data.x, data.y, 54, '#ffffff', 0.38, 3);
   });
@@ -1340,6 +1498,20 @@ function setupSocket() {
     ui.notify('波次奖励', data.col || '#48f0a0');
     effects.ring(data.x, data.y, 62, data.col || '#48f0a0', 0.46, 3);
     audio.reward();
+  });
+  sock.on('stage_failed', (data) => {
+    ui.notify(`第 ${data.wave || state.wave} 关失败，重新部署`, '#ff6666');
+    state.obj = data.obj || state.obj;
+    state.mission = data.mission || state.mission;
+    state.exits = data.exits || state.exits;
+    if (data.obs) {
+      state.obs = data.obs;
+      state.features = data.features || [];
+      state.z = {};
+      state.b = {};
+      state.items = {};
+    }
+    audio.playerDeath();
   });
   sock.on('game_restart', () => {
     inventoryOpen = false;
@@ -1649,7 +1821,12 @@ function loop(ts) {
       state.pl[myId].kills = me.kills;
       state.pl[myId].ammo = me.ammo;
       state.pl[myId].magSize = me.magSize;
-      state.pl[myId].reserveAmmo = me.reserveAmmo;
+      state.pl[myId].currentReserve = me.currentReserve;
+      state.pl[myId].ammoPools = me.ammoPools;
+      state.pl[myId].ammoType = me.ammoType;
+      state.pl[myId].ammoTypeName = me.ammoTypeName;
+      state.pl[myId].lives = me.lives;
+      state.pl[myId].maxLives = me.maxLives;
       state.pl[myId].materials = me.materials;
       state.pl[myId].lore = me.lore;
       state.pl[myId].weaponLevel = me.weaponLevel;
@@ -1660,6 +1837,8 @@ function loop(ts) {
       state.pl[myId].vehicleCd = me.vehicleCd;
       state.pl[myId].facility = me.facility;
       state.pl[myId].facilityStatus = me.facilityStatus;
+      state.pl[myId].sceneId = me.sceneId;
+      state.pl[myId].sceneName = me.sceneName;
       state.pl[myId].reloadCd = me.reloadCd;
       state.pl[myId].radius = me.radius;
       state.pl[myId].speed = me.speed;

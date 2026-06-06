@@ -3,7 +3,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ZCProtocol = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window, function () {
-  const PROTOCOL_VERSION = 16;
+  const PROTOCOL_VERSION = 18;
 
   const PLAYER = Object.freeze({
     X: 0,
@@ -30,7 +30,7 @@
     MAX_HP: 21,
     AMMO: 22,
     MAG_SIZE: 23,
-    RESERVE_AMMO: 24,
+    CURRENT_RESERVE: 24,
     MATERIALS: 25,
     LORE: 26,
     WEAPON_LEVEL: 27,
@@ -42,7 +42,14 @@
     VEHICLE_CD: 33,
     FACILITY: 34,
     FACILITY_STATUS: 35,
-    LENGTH: 36,
+    AMMO_POOLS: 36,
+    AMMO_TYPE: 37,
+    AMMO_TYPE_NAME: 38,
+    LIVES: 39,
+    MAX_LIVES: 40,
+    SCENE_ID: 41,
+    SCENE_NAME: 42,
+    LENGTH: 43,
   });
 
   const ZOMBIE = Object.freeze({
@@ -124,7 +131,7 @@
       spread: Boolean(tuple[PLAYER.SPREAD]),
       ammo: numberAt(tuple, PLAYER.AMMO, 24),
       magSize: numberAt(tuple, PLAYER.MAG_SIZE, 24),
-      reserveAmmo: numberAt(tuple, PLAYER.RESERVE_AMMO, 0),
+      currentReserve: numberAt(tuple, PLAYER.CURRENT_RESERVE, 0),
       materials: numberAt(tuple, PLAYER.MATERIALS, 0),
       lore: numberAt(tuple, PLAYER.LORE, 0),
       weaponLevel: numberAt(tuple, PLAYER.WEAPON_LEVEL, 1),
@@ -138,7 +145,27 @@
       vehicleCd: numberAt(tuple, PLAYER.VEHICLE_CD, 0),
       facility: tuple[PLAYER.FACILITY] || '',
       facilityStatus: tuple[PLAYER.FACILITY_STATUS] || '',
+      ammoPools: parseAmmoPools(tuple[PLAYER.AMMO_POOLS]),
+      ammoType: tuple[PLAYER.AMMO_TYPE] || 'pistol',
+      ammoTypeName: tuple[PLAYER.AMMO_TYPE_NAME] || '手枪弹',
+      lives: numberAt(tuple, PLAYER.LIVES, 3),
+      maxLives: numberAt(tuple, PLAYER.MAX_LIVES, 3),
+      sceneId: tuple[PLAYER.SCENE_ID] || 'main',
+      sceneName: tuple[PLAYER.SCENE_NAME] || '设施楼层',
     };
+  }
+
+  function parseAmmoPools(value) {
+    const pools = {};
+    String(value || '')
+      .split(',')
+      .filter(Boolean)
+      .forEach((entry) => {
+        const [key, raw] = entry.split(':');
+        const amount = Number(raw);
+        if (key && Number.isFinite(amount)) pools[key] = amount;
+      });
+    return pools;
   }
 
   function decodeZombie(tuple) {

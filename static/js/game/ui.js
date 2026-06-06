@@ -20,8 +20,22 @@ export function createUI() {
   const talentList = document.getElementById('talentList');
   let joinTimer = null;
   let intermissionFeedbackTimer = null;
+  let intermissionTalentKey = '';
   const introKey = 'zombie-crisis-intro-seen-v1';
-  const taskNames = { fuse: '保险丝', sample: '样本', keycard: '门禁卡' };
+  const taskNames = { fuse: '保险丝', sample: '样本', keycard: '门禁卡', lore: '档案' };
+  const ammoNames = {
+    pistol: '手枪弹',
+    rifle: '步枪弹',
+    smg: '冲锋弹',
+    shell: '霰弹',
+    explosive: '爆破弹',
+  };
+
+  function ammoSummary(pools = {}) {
+    return Object.keys(ammoNames)
+      .map((key) => `${ammoNames[key]} ${Math.max(0, Math.round(pools[key] || 0))}`)
+      .join(' · ');
+  }
 
   function setJoinLoading(on) {
     joinBtn.disabled = on;
@@ -138,6 +152,7 @@ export function createUI() {
     intermissionOverlay.setAttribute('aria-hidden', active ? 'false' : 'true');
     if (!active) {
       setIntermissionFeedback('');
+      intermissionTalentKey = '';
       return;
     }
 
@@ -164,7 +179,7 @@ export function createUI() {
     if (feedback && !feedback.dataset.locked)
       feedback.textContent = data.nextBoss && !data.ending ? '下一层会出现重型感染体，整备弹药和天赋。' : '';
     if (bag) {
-      bag.textContent = `零件 ${Math.max(0, Math.round(me.materials || 0))} · 档案 ${Math.max(0, Math.round(me.lore || 0))} · 备用弹 ${Math.max(0, Math.round(me.reserveAmmo || 0))}`;
+      bag.textContent = `零件 ${Math.max(0, Math.round(me.materials || 0))} · 档案 ${Math.max(0, Math.round(me.lore || 0))} · ${ammoSummary(me.ammoPools)}`;
     }
     if (continueStageBtn)
       continueStageBtn.textContent = data.youReady
@@ -176,32 +191,39 @@ export function createUI() {
           : `进入第 ${next} 关`;
 
     const talents = Object.values(data.talents || {});
-    const nodes = talents.length
-      ? talents.map((talent) => {
-          const row = document.createElement('div');
-          row.className = 'talent-row';
-          const info = document.createElement('div');
-          const name = document.createElement('b');
-          name.textContent = `${talent.name} Lv.${talent.level}/${talent.max}`;
-          const desc = document.createElement('span');
-          const maxed = talent.level >= talent.max;
-          desc.textContent = maxed ? `${talent.desc} · 已满级` : `${talent.desc} · 需要零件 ${talent.cost}`;
-          info.append(name, desc);
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.dataset.talent = talent.id;
-          button.textContent = maxed ? '满级' : `升级 ${talent.cost}`;
-          button.disabled = maxed || (me.materials || 0) < talent.cost;
-          row.append(info, button);
-          return row;
-        })
-      : (() => {
-          const row = document.createElement('div');
-          row.className = 'intermission-note';
-          row.textContent = '正在同步天赋数据...';
-          return [row];
-        })();
-    if (talentList) talentList.replaceChildren(...nodes);
+    const talentKey = JSON.stringify({
+      materials: me.materials || 0,
+      talents: talents.map((talent) => [talent.id, talent.level, talent.cost, talent.max]),
+    });
+    if (talentList && talentKey !== intermissionTalentKey) {
+      intermissionTalentKey = talentKey;
+      const nodes = talents.length
+        ? talents.map((talent) => {
+            const row = document.createElement('div');
+            row.className = 'talent-row';
+            const info = document.createElement('div');
+            const name = document.createElement('b');
+            name.textContent = `${talent.name} Lv.${talent.level}/${talent.max}`;
+            const desc = document.createElement('span');
+            const maxed = talent.level >= talent.max;
+            desc.textContent = maxed ? `${talent.desc} · 已满级` : `${talent.desc} · 需要零件 ${talent.cost}`;
+            info.append(name, desc);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.talent = talent.id;
+            button.textContent = maxed ? '满级' : `升级 ${talent.cost}`;
+            button.disabled = maxed || (me.materials || 0) < talent.cost;
+            row.append(info, button);
+            return row;
+          })
+        : (() => {
+            const row = document.createElement('div');
+            row.className = 'intermission-note';
+            row.textContent = '正在同步天赋数据...';
+            return [row];
+          })();
+      talentList.replaceChildren(...nodes);
+    }
   }
 
   function setIntermissionFeedback(text, color = '#48f0a0') {
@@ -246,7 +268,7 @@ export function createUI() {
   }
 
   function maxRequirements(exits) {
-    const goals = { fuse: 0, sample: 0, keycard: 0 };
+    const goals = { fuse: 0, sample: 0, keycard: 0, lore: 0 };
     for (const exit of exits || []) {
       const req = exit.requires || {};
       for (const typ of Object.keys(goals)) goals[typ] = Math.max(goals[typ], req[typ] || 0);
@@ -256,7 +278,7 @@ export function createUI() {
 
   function requirementText(req = {}, task = {}) {
     const parts = [];
-    for (const typ of ['fuse', 'sample', 'keycard']) {
+    for (const typ of ['fuse', 'sample', 'keycard', 'lore']) {
       const need = req[typ] || 0;
       if (!need) continue;
       parts.push(`${taskNames[typ]} ${task[typ] || 0}/${need}`);
@@ -266,7 +288,7 @@ export function createUI() {
 
   function renderTaskList(task, exits) {
     const goals = maxRequirements(exits);
-    const nodes = ['fuse', 'sample', 'keycard'].map((typ) => {
+    const nodes = ['fuse', 'sample', 'keycard', 'lore'].map((typ) => {
       const need = goals[typ] || 0;
       const have = task?.[typ] || 0;
       const node = document.createElement('div');
@@ -360,7 +382,7 @@ export function createUI() {
       invKeycard: task.keycard || 0,
       invParts: Math.max(0, Math.round(me.materials ?? 0)),
       invLore: Math.max(0, Math.round(me.lore ?? state.obj?.lore ?? 0)),
-      invReserve: Math.max(0, Math.round(me.reserveAmmo ?? 0)),
+      invReserve: ammoSummary(me.ammoPools),
     };
     for (const [id, value] of Object.entries(values)) {
       const node = document.getElementById(id);
@@ -419,11 +441,11 @@ export function createUI() {
     document.getElementById('combo').textContent = me.combo > 1 ? `连杀 x${me.combo}` : '';
     const ammo = Math.max(0, Math.round(me.ammo ?? 0));
     const magSize = Math.max(1, Math.round(me.magSize ?? 18));
-    const reserve = Math.max(0, Math.round(me.reserveAmmo ?? 0));
+    const reserve = Math.max(0, Math.round(me.currentReserve ?? 0));
     const ammoEl = document.getElementById('ammostat');
     ammoEl.textContent = `${ammo}/${magSize}`;
     ammoEl.style.color = ammo <= Math.max(3, magSize * 0.22) ? '#ff6666' : '#dce7f1';
-    document.getElementById('reservestat').textContent = reserve;
+    document.getElementById('reservestat').textContent = `${me.ammoTypeName || '备用弹'} ${reserve}`;
     document.getElementById('weaponname').textContent = me.weaponName || '手枪';
     const owned = new Set(me.weapons || ['pistol']);
     const order = weaponOrder.length ? weaponOrder : Array.from(owned);
@@ -454,11 +476,14 @@ export function createUI() {
     const stat = document.getElementById('objstat');
     const bar = document.getElementById('objbar');
     const story = document.getElementById('storyline');
-    title.textContent = obj.title || '搜寻撤离点';
+    const inRoom = state.scene && state.scene !== 'main';
+    title.textContent = inRoom ? `${state.sceneName || '设施'}内部` : obj.title || '搜寻撤离点';
     title.style.color = obj.readyExits ? '#48f0a0' : obj.boss ? '#ff4d7a' : '#ff4d5f';
     const sourceLeft = Math.max(0, Math.round(obj.infectionSource || 0));
     const sourceHint = sourceLeft > 0 ? ' · 感染源仍在活动' : '';
-    stat.textContent = `${obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
+    stat.textContent = inRoom
+      ? `${me.facilityStatus || '调查房间'} · 出口门返回走廊${sourceHint}`
+      : `${obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
     bar.style.width = `${Math.round(Math.max(0, Math.min(1, obj.progress || 0)) * 100)}%`;
     bar.style.background = obj.readyExits ? '#48f0a0' : obj.boss ? '#ff4d7a' : '#ff4d5f';
     renderTaskList(obj.task || {}, state.exits || []);
@@ -468,6 +493,15 @@ export function createUI() {
       `档案 ${lore}/${loreTotal}${lore >= loreTotal ? ' · 真相已拼合' : ''}`;
     story.textContent = obj.story || '耳机里只剩呼吸声。';
     deathOverlay.style.display = me.dead ? 'flex' : 'none';
+    if (me.dead) {
+      const sub = deathOverlay.querySelector('.sub');
+      const lives = Math.max(0, Math.round(me.lives ?? 0));
+      const maxLives = Math.max(1, Math.round(me.maxLives ?? 3));
+      if (sub) sub.textContent = lives > 0 ? `剩余部署 ${lives}/${maxLives}` : '部署耗尽，本关正在重开...';
+    }
+    const lifeNode = document.getElementById('livestat');
+    if (lifeNode)
+      lifeNode.textContent = `${Math.max(0, Math.round(me.lives ?? 3))}/${Math.max(1, Math.round(me.maxLives ?? 3))}`;
     updateTraining(training || {});
     setPing(pingMs);
 

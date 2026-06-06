@@ -1,7 +1,7 @@
 const assert = require('assert');
 const protocol = require('../static/js/protocol.js');
 
-assert.strictEqual(protocol.PROTOCOL_VERSION, 16);
+assert.strictEqual(protocol.PROTOCOL_VERSION, 18);
 
 const player = protocol.decodePlayer('p1', [
   10,
@@ -40,6 +40,13 @@ const player = protocol.decodePlayer('p1', [
   6.4,
   '机房',
   '供电已恢复',
+  'pistol:80,rifle:24,smg:0,shell:6,explosive:1',
+  'rifle',
+  '步枪弹',
+  2,
+  3,
+  'room:lab-2',
+  '样本库',
 ]);
 
 assert.deepStrictEqual(
@@ -66,7 +73,14 @@ assert.deepStrictEqual(
     spread: player.spread,
     ammo: player.ammo,
     magSize: player.magSize,
-    reserveAmmo: player.reserveAmmo,
+    currentReserve: player.currentReserve,
+    ammoPools: player.ammoPools,
+    ammoType: player.ammoType,
+    ammoTypeName: player.ammoTypeName,
+    lives: player.lives,
+    maxLives: player.maxLives,
+    sceneId: player.sceneId,
+    sceneName: player.sceneName,
     materials: player.materials,
     lore: player.lore,
     weaponLevel: player.weaponLevel,
@@ -102,7 +116,14 @@ assert.deepStrictEqual(
     spread: true,
     ammo: 7,
     magSize: 22,
-    reserveAmmo: 80,
+    currentReserve: 80,
+    ammoPools: { pistol: 80, rifle: 24, smg: 0, shell: 6, explosive: 1 },
+    ammoType: 'rifle',
+    ammoTypeName: '步枪弹',
+    lives: 2,
+    maxLives: 3,
+    sceneId: 'room:lab-2',
+    sceneName: '样本库',
     materials: 5,
     lore: 2,
     weaponLevel: 4,
