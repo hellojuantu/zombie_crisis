@@ -894,8 +894,14 @@ export function createRenderer(canvas, minimap) {
     }
   }
 
-  function drawHorrorOverlay(time) {
-    const flicker = 0.016 + Math.sin(time * 0.019) * 0.008;
+  function drawHorrorOverlay(state, time) {
+    const powered = Boolean(state.obj?.powered);
+    const fogActive = state.fog?.until && state.fog.until > time;
+    const flicker = 0.02 + Math.sin(time * 0.019) * 0.01;
+    const centerShade = powered ? 0.06 : 0.14;
+    const midShade = powered ? 0.12 : 0.24;
+    const edgeShade = powered ? 0.3 : 0.48;
+    const fogShade = fogActive ? 0.08 : 0;
     const grad = ctx.createRadialGradient(
       width / 2,
       height / 2,
@@ -904,70 +910,17 @@ export function createRenderer(canvas, minimap) {
       height / 2,
       Math.max(width, height) * 0.72,
     );
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(0.72, `rgba(0,0,0,${0.12 + flicker})`);
-    grad.addColorStop(1, `rgba(0,0,0,${0.36 + flicker})`);
+    grad.addColorStop(0, `rgba(0,0,0,${centerShade + fogShade * 0.4})`);
+    grad.addColorStop(0.68, `rgba(0,0,0,${midShade + flicker + fogShade * 0.6})`);
+    grad.addColorStop(1, `rgba(0,0,0,${edgeShade + flicker + fogShade})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
-  }
 
-  function lightSpot(x, y, radius, inner = 0.94) {
-    const grad = ctx.createRadialGradient(x, y, Math.max(1, radius * 0.12), x, y, radius);
-    grad.addColorStop(0, `rgba(0,0,0,${inner})`);
-    grad.addColorStop(0.52, 'rgba(0,0,0,.62)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawDarknessCloud(state, me, myId, visualMe, view, effects, time) {
-    const powered = Boolean(state.obj?.powered);
-    const fogFactor = state.fog?.until && state.fog.until > time ? 0.86 : 1;
-    const baseRadius = (powered ? 820 : 680) * fogFactor;
-    const playerCenter = {
-      x: (visualMe.ready ? visualMe.x : me.x) - view.x,
-      y: (visualMe.ready ? visualMe.y : me.y) - view.y,
-    };
-    ctx.save();
-    ctx.fillStyle = powered ? 'rgba(0,0,0,.56)' : 'rgba(0,0,0,.72)';
-    ctx.fillRect(0, 0, width, height);
-    ctx.globalCompositeOperation = 'destination-out';
-    lightSpot(playerCenter.x, playerCenter.y, baseRadius, powered ? 0.98 : 0.94);
-    for (const [pid, p] of Object.entries(state.pl || {})) {
-      if (pid === myId || p.dead) continue;
-      lightSpot(p.x - view.x, p.y - view.y, powered ? 320 : 260, 0.78);
-    }
-    for (const exit of state.exits || []) {
-      if (!exit.visible || exit.done) continue;
-      lightSpot(exit.x - view.x, exit.y - view.y, exit.ready ? 250 : 185, 0.68);
-    }
-    for (const ring of effects.rings || []) {
-      lightSpot(ring.x - view.x, ring.y - view.y, Math.min(280, 90 + ring.radius * 0.6), 0.62);
-    }
-    for (const bullet of Object.values(state.b || {})) {
-      lightSpot(bullet.x - view.x, bullet.y - view.y, bullet.weapon === 'launcher' ? 140 : 82, 0.55);
-    }
-    ctx.globalCompositeOperation = 'source-over';
-    const edge = ctx.createRadialGradient(
-      playerCenter.x,
-      playerCenter.y,
-      baseRadius * 0.55,
-      playerCenter.x,
-      playerCenter.y,
-      baseRadius * 1.25,
-    );
-    edge.addColorStop(0, 'rgba(0,0,0,0)');
-    edge.addColorStop(1, powered ? 'rgba(0,0,0,.12)' : 'rgba(0,0,0,.2)');
-    ctx.fillStyle = edge;
-    ctx.fillRect(0, 0, width, height);
     for (let i = 0; i < 10; i += 1) {
       const y = ((time * (0.01 + i * 0.001) + i * 131) % (height + 180)) - 90;
-      ctx.fillStyle = `rgba(0,0,0,${powered ? 0.018 : 0.026})`;
+      ctx.fillStyle = `rgba(0,0,0,${powered ? 0.016 : 0.028})`;
       ctx.fillRect(-100, y, width + 200, 22 + (i % 5) * 10);
     }
-    ctx.restore();
   }
 
   function drawFogOverlay(fog, time) {
@@ -1079,9 +1032,8 @@ export function createRenderer(canvas, minimap) {
     drawZombies(state.z, view, time);
     drawEffects({ decals: [], rings: effects.rings, particles: effects.particles }, view);
     drawPlayers(state.pl, me, myId, visualMe, view, time);
-    drawDarknessCloud(state, me, myId, visualMe, view, effects, time);
     drawFogOverlay(state.fog, time);
-    drawHorrorOverlay(time);
+    drawHorrorOverlay(state, time);
     if (options.drawMinimap !== false) drawMinimap(state, me, myId, view, state.mw, state.mh);
   }
 

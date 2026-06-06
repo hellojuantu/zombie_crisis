@@ -1,7 +1,7 @@
-import { createAudio } from './audio.js?v=44';
-import { createEffects } from './effects.js?v=44';
-import { createRenderer } from './render.js?v=44';
-import { createUI } from './ui.js?v=44';
+import { createAudio } from './audio.js?v=45';
+import { createEffects } from './effects.js?v=45';
+import { createRenderer } from './render.js?v=45';
+import { createUI } from './ui.js?v=45';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
 const { stageFailedMessage } = window.ZCMessages;
