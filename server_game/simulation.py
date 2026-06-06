@@ -1168,7 +1168,7 @@ class Game:
                 "name": room.get("label", "设施"),
                 "mw": w,
                 "mh": h,
-                "spawn": (210, door_y),
+                "spawn": (300, door_y),
                 "exit": {"x": 130, "y": door_y, "radius": ROOM_DOOR_RADIUS},
                 "loot": {"x": 250, "y": 170, "w": w - 420, "h": h - 340},
                 "zombie_points": [
@@ -2311,6 +2311,37 @@ class Game:
     def _near_room_effect(self, x, y, effect, padding=0):
         return any(self._feature_contains(room, x, y, padding=padding) for room in self._rooms_by_effect(effect))
 
+    def _room_return_point(self, room, player):
+        if not room:
+            return self.spawn_point
+        x = finite_float(player.get("main_x"), room.get("x", self.spawn_point[0]) + room.get("w", 0) / 2)
+        y = finite_float(player.get("main_y"), room.get("y", self.spawn_point[1]) + room.get("h", 0) / 2)
+        left = room.get("x", 0)
+        top = room.get("y", 0)
+        right = left + room.get("w", 0)
+        bottom = top + room.get("h", 0)
+        margin = PLAYER_R * 2.8
+        distances = {
+            "left": abs(x - left),
+            "right": abs(right - x),
+            "top": abs(y - top),
+            "bottom": abs(bottom - y),
+        }
+        side = min(distances, key=distances.get)
+        if side == "left":
+            x = left - margin
+            y = clamp(y, top, bottom)
+        elif side == "right":
+            x = right + margin
+            y = clamp(y, top, bottom)
+        elif side == "top":
+            y = top - margin
+            x = clamp(x, left, right)
+        else:
+            y = bottom + margin
+            x = clamp(x, left, right)
+        return clamp(x, PLAYER_R, MAP_W - PLAYER_R), clamp(y, PLAYER_R, MAP_H - PLAYER_R)
+
     def _enter_room_scene(self, sid, player, room, now):
         if self._entity_scene(player) != SCENE_MAIN:
             return False
@@ -2327,7 +2358,7 @@ class Game:
         player["room_id"] = room.get("id", "")
         player["facility_room_id"] = ""
         player["facility_search"] = 0
-        player["x"], player["y"] = scene.get("spawn", (210, ROOM_H / 2))
+        player["x"], player["y"] = scene.get("spawn", (300, ROOM_H / 2))
         player["vx"] = 0
         player["vy"] = 0
         player["keys"] = {}
@@ -2352,13 +2383,14 @@ class Game:
         if scene_id == SCENE_MAIN:
             return False
         room = self._room_for_scene(scene_id)
+        return_x, return_y = self._room_return_point(room, player)
         player["scene"] = SCENE_MAIN
         player["scene_name"] = "设施楼层"
         player["room_id"] = ""
         player["facility_room_id"] = ""
         player["facility_search"] = 0
-        player["x"] = player.get("main_x", (room or {}).get("x", self.spawn_point[0]) + 26)
-        player["y"] = player.get("main_y", (room or {}).get("y", self.spawn_point[1]) + 26)
+        player["x"] = return_x
+        player["y"] = return_y
         player["vx"] = 0
         player["vy"] = 0
         player["keys"] = {}

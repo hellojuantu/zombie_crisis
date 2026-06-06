@@ -667,6 +667,9 @@ class GameCoreTest(unittest.TestCase):
         self.assertEqual(snap["sceneName"], room["label"])
         self.assertLess(snap["mw"], 3000)
 
+        game._apply_facility_effects(SERVER_DT, now + SERVER_DT)
+        self.assertEqual(player["scene"], scene_id)
+
         scene = game.room_scenes[scene_id]
         player["x"] = scene["exit"]["x"]
         player["y"] = scene["exit"]["y"]
@@ -674,6 +677,9 @@ class GameCoreTest(unittest.TestCase):
 
         self.assertEqual(player["scene"], "main")
         self.assertEqual(player["room_id"], "")
+        self.assertIsNone(game._room_at(player["x"], player["y"], padding=PLAYER_R * 0.65))
+        game._apply_facility_effects(SERVER_DT, now + 3.0)
+        self.assertEqual(player["scene"], "main")
         self.assertTrue(any(ev == "scene_change" and data["reason"] == "leave_room" for ev, data in events))
 
     def test_indoor_scene_entities_are_isolated_and_zombies_move(self):
@@ -687,7 +693,7 @@ class GameCoreTest(unittest.TestCase):
         scene_id = player["scene"]
 
         main_zid = game.spawn_zombie(x=player.get("main_x", 1000), y=player.get("main_y", 1000), ztype="walker", scene="main")
-        room_zid = game.spawn_zombie(x=player["x"] + 360, y=player["y"], ztype="runner", scene=scene_id)
+        room_zid = game.spawn_zombie(x=player["x"] + 620, y=player["y"], ztype="runner", scene=scene_id)
         main_item = game.spawn_item(x=player.get("main_x", 1000), y=player.get("main_y", 1000), item_type="parts", scene="main")
         room_item = game.spawn_item(x=500, y=500, item_type="parts", scene=scene_id)
 
