@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>僵尸危机</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#050608;color:#edf2f7;font-family:'Microsoft YaHei',Arial,sans-serif;overflow:hidden;overscroll-behavior:none}
+#gameCanvas{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:crosshair;touch-action:none}
+#hud,#wave-info,#scoreboard{position:fixed;z-index:10;background:rgba(10,14,20,.78);border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,.24);border-radius:8px;backdrop-filter:blur(8px)}
+#hud{top:10px;left:10px;padding:12px 16px;font-size:14px;min-width:244px}
+#wave-info{top:10px;right:10px;padding:12px 16px;font-size:14px;text-align:left;min-width:230px;max-width:290px;line-height:1.45}
+#scoreboard{bottom:10px;left:10px;padding:10px 14px;font-size:13px;min-width:210px}
+.entry{margin:4px 0;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 10px}
+.metric{color:#9aa4af;margin-top:3px}
+.big{font-size:22px;font-weight:800;color:#48f0a0}
+.story{margin-top:6px;color:#aeb7c2;font-size:12px}
+.progress{height:5px;background:rgba(255,255,255,.13);border-radius:999px;overflow:hidden;margin-top:6px}
+.progress span{display:block;height:100%;width:0;background:#48f0a0;transition:width .18s linear}
+#notifications{position:fixed;top:38%;left:50%;transform:translate(-50%,-50%);z-index:20;text-align:center;pointer-events:none}
+.nt{font-size:22px;font-weight:800;padding:6px 14px;margin:4px;text-shadow:1px 1px 4px rgba(0,0,0,.9);animation:nf 1.8s forwards}
+@keyframes nf{0%{opacity:1;transform:translateY(0) scale(1)}70%{opacity:1}100%{opacity:0;transform:translateY(-30px) scale(.94)}}
+#join-screen{position:fixed;inset:0;background:radial-gradient(ellipse at center,#1a1115,#020304 70%);z-index:100;display:flex;align-items:center;justify-content:center;flex-direction:column}
+#join-screen h1{font-size:58px;color:#ff4d5f;text-shadow:3px 3px 18px #000;letter-spacing:2px}
+#join-screen h2{font-size:18px;color:#aeb7c2;margin:10px 0 28px}
+.btn{padding:15px 40px;font-size:20px;background:#48f0a0;color:#07110c;border:none;border-radius:8px;cursor:pointer;margin:5px;transition:transform .16s,background .16s;box-shadow:0 4px 15px rgba(72,240,160,.26);font-weight:800}
+.btn:hover{background:#6dffb8;transform:translateY(-2px)}
+.btn:disabled{opacity:.65;cursor:wait;transform:none}
+.btn.sec{background:#303843;color:#edf2f7;box-shadow:0 4px 15px rgba(0,0,0,.32)}
+.btn.sec:hover{background:#414b58}
+.ci{margin-top:28px;color:#8e99a5;font-size:14px;text-align:center;line-height:2}
+.ci span{color:#dbe5ee;font-weight:bold}
+#death-overlay{position:fixed;inset:0;background:rgba(255,60,60,.22);z-index:50;display:none;align-items:center;justify-content:center;flex-direction:column;pointer-events:none}
+#death-overlay .msg{font-size:36px;color:#fff;text-shadow:2px 2px 8px #000}
+#death-overlay .sub{font-size:16px;color:#ddd;margin-top:10px}
+#minimap{position:fixed;bottom:10px;right:10px;z-index:10;border:2px solid #52606d;border-radius:6px;background:rgba(0,0,0,.5)}
+</style>
+</head>
+<body>
+<div id="join-screen">
+  <h1>僵尸危机</h1>
+  <h2>黑暗迷宫 · 收集任务物 · 找到条件正确的撤离点</h2>
+  <button class="btn" id="joinBtn">加入游戏</button>
+  <button class="btn sec" id="restartBtn">重新开始</button>
+  <div class="ci"><span>WASD</span> 移动 · <span>鼠标</span> 瞄准 · <span>左键</span> 开火 · <span>空格/Shift</span> 冲刺<br>找保险丝，打怪取样本/门禁卡，满足撤离条件后离开</div>
+</div>
+
+<div id="hud" style="display:none">
+  <div id="pname" style="font-weight:800;font-size:16px"></div>
+  <div style="margin-top:8px">生命</div>
+  <div class="big" id="hpstat">100/100</div>
+  <div>分数: <span id="scorestat" style="font-weight:800;color:#ffc247">0</span> · 击杀: <span id="killstat" style="font-weight:800;color:#ff8a65">0</span></div>
+  <div>等级: <span id="lvl" style="font-weight:800;color:#48f0a0">1</span> <span id="combo" style="color:#ffc247"></span></div>
+  <div>开火: <span id="firecd" style="color:#aaa">就绪</span></div>
+  <div>状态: <span id="buffstat" style="color:#aaa">无</span></div>
+  <div class="metric">网络: <span id="netstat">未连接</span> · Ping: <span id="pingstat">--</span></div>
+  <div class="metric">性能: FPS <span id="fpsstat">--</span> · Srv <span id="srvstat">--</span></div>
+  <div class="metric">实体: <span id="entstat">--</span> · 渲染 <span id="renderstat">--</span></div>
+</div>
+
+<div id="wave-info" style="display:none">
+  <div>第 <span id="wavestat" style="color:#ffc247;font-weight:800">1</span> 关 · 感染体 <span id="zombiestat" style="color:#dce7f1;font-weight:800">0</span></div>
+  <div id="objtitle" style="font-weight:800;color:#ff4d5f;margin-top:4px">搜寻撤离点</div>
+  <div id="objstat">收集任务物</div>
+  <div class="progress"><span id="objbar"></span></div>
+  <div id="storyline" class="story">耳机里只剩呼吸声。</div>
+</div>
+<div id="scoreboard" style="display:none"><div style="font-weight:800;margin-bottom:5px">排行榜</div><div id="slist"></div></div>
+<div id="notifications"></div>
+<div id="death-overlay"><div class="msg">你倒下了</div><div class="sub">正在重新部署...</div></div>
+<canvas id="gameCanvas"></canvas>
+<canvas id="minimap" width="150" height="150"></canvas>
+
+<script src="/static/vendor/socket.io.min.js"></script>
+<script src="/static/js/protocol.js"></script>
+<script src="/static/js/prediction.js"></script>
+<script src="/static/js/interpolation.js"></script>
+<script src="/static/js/camera.js"></script>
+<script src="/static/js/timing.js"></script>
+<script src="/static/js/netcode.js"></script>
+<script type="module" src="/static/js/game/app.js"></script>
+</body>
+</html>
