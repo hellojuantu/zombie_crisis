@@ -1,7 +1,7 @@
-import { createAudio } from './audio.js?v=38';
-import { createEffects } from './effects.js?v=38';
-import { createRenderer } from './render.js?v=38';
-import { createUI } from './ui.js?v=38';
+import { createAudio } from './audio.js?v=39';
+import { createEffects } from './effects.js?v=39';
+import { createRenderer } from './render.js?v=39';
+import { createUI } from './ui.js?v=39';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
 
@@ -91,6 +91,7 @@ let localDashReady = 0;
 let localShotReady = 0;
 let localMeleeReady = 0;
 let lastFireRequestAt = 0;
+const pendingShotAnchors = new Map();
 let pingSeq = 0;
 let pingSent = {};
 let pingMs = null;
@@ -302,14 +303,85 @@ function nearbyDanger() {
   return Math.min(1.6, danger);
 }
 
-function updateAim() {
-  const sx = (visualMe.ready ? visualMe.x : me.x) - camView.x;
-  const sy = (visualMe.ready ? visualMe.y : me.y) - camView.y;
-  me.aim = Math.atan2(pointerY - sy, pointerX - sx);
-}
-
 function visiblePlayerCenter() {
   return visualMe.ready ? visualMe : me;
+}
+
+function worldAimTarget() {
+  return {
+    x: pointerX + camView.x,
+    y: pointerY + camView.y,
+  };
+}
+
+function updateAim() {
+  const origin = visiblePlayerCenter();
+  const target = worldAimTarget();
+  me.aim = Math.atan2(target.y - origin.y, target.x - origin.x);
+}
+
+function currentMuzzlePoint(angle = me.aim) {
+  const meta = currentWeaponMeta();
+  const muzzle = meta.muzzle || muzzleForward;
+  const origin = visiblePlayerCenter();
+  return {
+    x: origin.x + Math.cos(angle) * muzzle,
+    y: origin.y + Math.sin(angle) * muzzle,
+  };
+}
+
+function pruneShotAnchors(now = performance.now()) {
+  for (const [seq, anchor] of pendingShotAnchors) {
+    if (now - anchor.t > 900) pendingShotAnchors.delete(seq);
+  }
+}
+
+function rememberShotAnchor(seq, now = performance.now()) {
+  if (!seq) return;
+  pruneShotAnchors(now);
+  const muzzle = currentMuzzlePoint(me.aim);
+  pendingShotAnchors.set(seq, {
+    x: muzzle.x,
+    y: muzzle.y,
+    t: now,
+  });
+}
+
+function shotAnchor(seq) {
+  if (!seq) return null;
+  const anchor = pendingShotAnchors.get(seq);
+  if (!anchor || performance.now() - anchor.t > 900) return null;
+  return anchor;
+}
+
+function withLocalBulletAnchor(next, existing) {
+  if (!next || next.owner !== myId) return next;
+  let visualDx = existing?.visualDx;
+  let visualDy = existing?.visualDy;
+  if (!Number.isFinite(visualDx) || !Number.isFinite(visualDy)) {
+    const anchor = shotAnchor(next.shotSeq);
+    visualDx = 0;
+    visualDy = 0;
+    if (anchor) {
+      visualDx = anchor.x - next.spawnX;
+      visualDy = anchor.y - next.spawnY;
+      if (Math.hypot(visualDx, visualDy) > 220) {
+        visualDx = 0;
+        visualDy = 0;
+      }
+    }
+  }
+  if (!visualDx && !visualDy) return Object.assign(next, { visualDx: 0, visualDy: 0 });
+  return Object.assign({}, next, {
+    x: next.x + visualDx,
+    y: next.y + visualDy,
+    spawnX: next.spawnX + visualDx,
+    spawnY: next.spawnY + visualDy,
+    prevX: next.prevX + visualDx,
+    prevY: next.prevY + visualDy,
+    visualDx,
+    visualDy,
+  });
 }
 
 function inputDir() {
@@ -434,12 +506,12 @@ function localShotFx(nowSeconds, force = false) {
   const life = meta.bullet_life || meta.bulletLife || 0.7;
   const range = Math.max(82, Math.min(230, speed * Math.min(life, 0.24)));
   const col = meta.color || myCol;
-  const origin = visiblePlayerCenter();
+  const origin = currentMuzzlePoint(me.aim);
   for (const angle of angles) {
-    const x1 = origin.x + Math.cos(angle) * muzzle;
-    const y1 = origin.y + Math.sin(angle) * muzzle;
-    const x2 = origin.x + Math.cos(angle) * (muzzle + range);
-    const y2 = origin.y + Math.sin(angle) * (muzzle + range);
+    const x1 = origin.x;
+    const y1 = origin.y;
+    const x2 = origin.x + Math.cos(angle) * range;
+    const y2 = origin.y + Math.sin(angle) * range;
     effects.line(x1, y1, x2, y2, col, 0.055, me.weapon === 'launcher' ? 4 : 2);
   }
 }
@@ -466,6 +538,7 @@ function requestFire(nowMs, hold = false) {
   if (inventoryOpen) return;
   audio.unlock();
   markTraining('shoot');
+  updateAim();
   if (hold) shooting = true;
   fireReq = true;
   inputDirty = true;
@@ -525,6 +598,7 @@ function sendInput(force = false) {
   const reload = paused ? false : reloadReq;
   const fire = paused ? false : fireReq;
   const weapon = paused ? '' : weaponReq;
+  const aimTarget = worldAimTarget();
   const active = paused || ik.up || ik.down || ik.left || ik.right || shooting || dash || reload || fire || weapon;
   const sig = `${ZCNetcode.inputSignature(ik, paused ? false : shooting, dash, me.aim, AIM_EPS)}|${reload ? 1 : 0}|${fire ? 1 : 0}|${weapon}|${paused ? 1 : 0}`;
   const changed = sig !== lastInputSig;
@@ -543,10 +617,13 @@ function sendInput(force = false) {
   lastInputAt = now;
   lastInputSig = sig;
   inputSeq += 1;
+  if (!paused && (fire || shooting)) rememberShotAnchor(inputSeq, now);
   sock.emit('player_input', {
     seq: inputSeq,
     keys: ik,
     aim_angle: me.aim,
+    aim_x: aimTarget.x,
+    aim_y: aimTarget.y,
     shooting: paused ? false : shooting,
     dash,
     reload,
@@ -758,7 +835,8 @@ function setupSocket() {
 
     const bdata = data.b || {};
     for (const bid of Object.keys(bdata)) {
-      const next = mkB(bdata[bid]);
+      const rawNext = mkB(bdata[bid]);
+      const next = withLocalBulletAnchor(rawNext, state.b[bid]);
       if (state.b[bid]) {
         const b = state.b[bid];
         b.x += (next.x - b.x) * 0.35;
@@ -777,6 +855,9 @@ function setupSocket() {
           spawnY: next.spawnY,
           prevX: next.prevX,
           prevY: next.prevY,
+          shotSeq: next.shotSeq,
+          visualDx: next.visualDx,
+          visualDy: next.visualDy,
         });
       } else {
         state.b[bid] = next;
@@ -1512,8 +1593,11 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function advanceBullets(dt) {
+  pruneShotAnchors();
   for (const bid of Object.keys(state.b)) {
     const b = state.b[bid];
+    b.prevX = b.x;
+    b.prevY = b.y;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.life -= dt;

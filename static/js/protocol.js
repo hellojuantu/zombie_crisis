@@ -3,7 +3,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ZCProtocol = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window, function () {
-  const PROTOCOL_VERSION = 15;
+  const PROTOCOL_VERSION = 16;
 
   const PLAYER = Object.freeze({
     X: 0,
@@ -75,7 +75,8 @@
     SPAWN_Y: 12,
     PREV_X: 13,
     PREV_Y: 14,
-    LENGTH: 15,
+    SHOT_SEQ: 15,
+    LENGTH: 16,
   });
 
   const ITEM = Object.freeze({
@@ -174,6 +175,7 @@
       spawnY: numberAt(tuple, BULLET.SPAWN_Y, numberAt(tuple, BULLET.Y, 0)),
       prevX: numberAt(tuple, BULLET.PREV_X, numberAt(tuple, BULLET.SPAWN_X, numberAt(tuple, BULLET.X, 0))),
       prevY: numberAt(tuple, BULLET.PREV_Y, numberAt(tuple, BULLET.SPAWN_Y, numberAt(tuple, BULLET.Y, 0))),
+      shotSeq: numberAt(tuple, BULLET.SHOT_SEQ, 0),
     };
   }
 

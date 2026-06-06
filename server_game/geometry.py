@@ -61,6 +61,14 @@ def normalize_input(data):
     }
     aim = finite_float(data.get("aim_angle"), 0.0)
     aim = ((aim + math.pi) % (math.pi * 2)) - math.pi
+    aim_x = data.get("aim_x")
+    aim_y = data.get("aim_y")
+    aim_target = None
+    if aim_x is not None and aim_y is not None:
+        tx = finite_float(aim_x, None)
+        ty = finite_float(aim_y, None)
+        if tx is not None and ty is not None:
+            aim_target = (tx, ty)
     try:
         seq = int(data.get("seq", 0))
     except (TypeError, ValueError):
@@ -69,6 +77,7 @@ def normalize_input(data):
     return {
         "keys": keys,
         "aim_angle": aim,
+        "aim_target": aim_target,
         "shooting": bool(data.get("shooting")),
         "fire": bool(data.get("fire")),
         "dash": bool(data.get("dash")),

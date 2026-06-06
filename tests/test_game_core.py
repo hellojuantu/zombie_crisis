@@ -203,6 +203,35 @@ class GameCoreTest(unittest.TestCase):
         self.assertAlmostEqual(bullet["spawn_y"], player["y"] - muzzle, places=5)
         self.assertAlmostEqual(bullet["y"], player["y"] - muzzle, places=5)
 
+    def test_fire_uses_world_aim_target_after_moving(self):
+        game, _ = self.make_game()
+        player = game.players["p1"]
+        target_x = player["x"]
+        target_y = player["y"] - 600
+
+        game.handle_input(
+            "p1",
+            {
+                "seq": 9,
+                "keys": {"right": True},
+                "aim_angle": 0,
+                "aim_x": target_x,
+                "aim_y": target_y,
+                "fire": True,
+                "shooting": False,
+            },
+        )
+        self.tick_once(game)
+
+        bullet = next(iter(game.bullets.values()))
+        muzzle = WEAPON_TYPES["pistol"]["muzzle"]
+        expected_angle = math.atan2(target_y - player["y"], target_x - player["x"])
+        self.assertGreater(player["x"], target_x)
+        self.assertAlmostEqual(math.atan2(bullet["vy"], bullet["vx"]), expected_angle, places=5)
+        self.assertAlmostEqual(bullet["spawn_x"], player["x"] + math.cos(expected_angle) * muzzle, places=5)
+        self.assertAlmostEqual(bullet["spawn_y"], player["y"] + math.sin(expected_angle) * muzzle, places=5)
+        self.assertEqual(bullet["shot_seq"], 9)
+
     def test_close_zombie_attack_triggers_automatic_melee(self):
         game, events = self.make_game()
         game.zombies[1] = self.zombie(1, 1052, 1000, hp=20)

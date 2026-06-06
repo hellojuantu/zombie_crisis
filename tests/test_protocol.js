@@ -1,7 +1,7 @@
 const assert = require('assert');
 const protocol = require('../static/js/protocol.js');
 
-assert.strictEqual(protocol.PROTOCOL_VERSION, 15);
+assert.strictEqual(protocol.PROTOCOL_VERSION, 16);
 
 const player = protocol.decodePlayer('p1', [
   10,
@@ -124,7 +124,7 @@ assert.strictEqual(zombie.type, 'runner');
 assert.strictEqual(zombie.radius, 13);
 assert.strictEqual(zombie.maxHp, 32);
 
-const bullet = protocol.decodeBullet([5, 6, 760, 0, '#fff', 4, 'p1', 0.8, 'launcher', 150, 78, 1, 2, 3, 4]);
+const bullet = protocol.decodeBullet([5, 6, 760, 0, '#fff', 4, 'p1', 0.8, 'launcher', 150, 78, 1, 2, 3, 4, 42]);
 assert.strictEqual(bullet.vx, 760);
 assert.strictEqual(bullet.owner, 'p1');
 assert.strictEqual(bullet.weapon, 'launcher');
@@ -133,12 +133,14 @@ assert.strictEqual(bullet.spawnX, 1);
 assert.strictEqual(bullet.spawnY, 2);
 assert.strictEqual(bullet.prevX, 3);
 assert.strictEqual(bullet.prevY, 4);
+assert.strictEqual(bullet.shotSeq, 42);
 
 const oldBullet = protocol.decodeBullet([5, 6, 760, 0, '#fff', 4, 'p1', 0.8, 'launcher', 150, 78]);
 assert.strictEqual(oldBullet.spawnX, 5);
 assert.strictEqual(oldBullet.spawnY, 6);
 assert.strictEqual(oldBullet.prevX, 5);
 assert.strictEqual(oldBullet.prevY, 6);
+assert.strictEqual(oldBullet.shotSeq, 0);
 
 const item = protocol.decodeItem([5, 6, 'rapid', '#44ffaa', 'R', '速射', 15]);
 assert.strictEqual(item.type, 'rapid');

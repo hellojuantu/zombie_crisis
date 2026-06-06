@@ -2349,6 +2349,7 @@ class Game:
                 "prev_x": muzzle_x,
                 "prev_y": muzzle_y,
                 "born_tick": self.tick_id,
+                "shot_seq": player.get("ack_seq", 0),
                 "vx": math.cos(angle) * speed,
                 "vy": math.sin(angle) * speed,
                 "radius": meta.get("bullet_radius", BULLET_R),
@@ -2584,6 +2585,7 @@ class Game:
                     self._vehicle_ram(sid, player, now, zombie_grid)
             force_fire = bool(player.pop("fire_requested", False))
             if player.get("shooting") or force_fire:
+                self._refresh_player_aim(player)
                 if zombie_grid is None:
                     zombie_grid = self._build_grid(self.zombies)
                 self._try_shoot(sid, player, now, force=force_fire, zombie_grid=zombie_grid)
@@ -3277,6 +3279,8 @@ class Game:
             "vx": 0,
             "vy": 0,
             "aim_angle": 0,
+            "aim_x": None,
+            "aim_y": None,
             "shooting": False,
             "fire_cd": 0,
             "melee_cd": 0,
@@ -3347,6 +3351,9 @@ class Game:
         player["ack_seq"] = inp["seq"]
         player["keys"] = inp["keys"]
         player["aim_angle"] = inp["aim_angle"]
+        if inp.get("aim_target"):
+            player["aim_x"], player["aim_y"] = inp["aim_target"]
+            self._refresh_player_aim(player)
         player["paused"] = inp.get("paused", False)
         if self.intermission:
             player["keys"] = {}
@@ -3377,6 +3384,19 @@ class Game:
             self._try_reload(sid, player, now, manual=True)
         if inp["fire"]:
             player["fire_requested"] = True
+
+    def _refresh_player_aim(self, player):
+        tx = player.get("aim_x")
+        ty = player.get("aim_y")
+        if tx is None or ty is None:
+            return player.get("aim_angle", 0)
+        dx = tx - player["x"]
+        dy = ty - player["y"]
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            return player.get("aim_angle", 0)
+        angle = math.atan2(dy, dx)
+        player["aim_angle"] = angle
+        return angle
 
     def mark_seen(self, sid, now=None):
         player = self.players.get(sid)
@@ -3462,6 +3482,7 @@ class Game:
             round(bullet.get("spawn_y", bullet["y"]), 1),
             round(bullet.get("prev_x", bullet.get("spawn_x", bullet["x"])), 1),
             round(bullet.get("prev_y", bullet.get("spawn_y", bullet["y"])), 1),
+            bullet.get("shot_seq", 0),
         ]
 
     def _item_tuple(self, item):
