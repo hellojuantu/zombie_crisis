@@ -207,7 +207,7 @@ async def on_restart(sid, data):
 async def on_restart_stage(sid, data):
     await start_background_tasks()
     async with _game_lock:
-        G.restart_current_stage(sid, reason="manual")
+        G.restart_current_stage(sid, reason="abandon")
         events = drain_events()
     await emit_events(events)
 

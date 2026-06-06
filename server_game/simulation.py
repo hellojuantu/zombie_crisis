@@ -1415,6 +1415,19 @@ class Game:
         })
         self._emit_to("scene_change", payload, [sid])
 
+    def _scene_has_players(self, scene_id):
+        if not scene_id:
+            return False
+        return any(self._entity_scene(player) == scene_id for player in self.players.values())
+
+    def _sweep_empty_room_scene(self, scene_id):
+        if not scene_id or scene_id == SCENE_MAIN or self._scene_has_players(scene_id):
+            return
+        for entities in (self.zombies, self.bullets, self.items):
+            for eid, entity in list(entities.items()):
+                if self._entity_scene(entity) == scene_id:
+                    entities.pop(eid, None)
+
     def _index_obstacles(self):
         self.obstacle_grid = {}
         for idx, obstacle in enumerate(self.obstacles):
@@ -2360,6 +2373,7 @@ class Game:
             "col": "#aee6ff",
             "facility": (room or {}).get("effect", ""),
         }, [sid])
+        self._sweep_empty_room_scene(scene_id)
         return True
 
     def _room_exit_reached(self, player):
@@ -4079,6 +4093,8 @@ class Game:
         for _ in range(INITIAL_ITEMS):
             self.spawn_item(emit=False)
         scene_payload = self._scene_payload(SCENE_MAIN)
+        # stage_failed reasons: wipe=deployment exhausted, abandon=player chose to restart,
+        # extraction_failed=reserved for future terminal-route failures.
         self._emit("stage_failed", {
             **scene_payload,
             "wave": self.wave,
@@ -4094,7 +4110,7 @@ class Game:
             "stage": self.stage_director,
         })
 
-    def restart_current_stage(self, sid=None, reason="manual"):
+    def restart_current_stage(self, sid=None, reason="abandon"):
         if not self.running or not self.players:
             return False
         if sid and sid not in self.players:
@@ -4235,10 +4251,12 @@ class Game:
     def remove_player(self, sid):
         removed = sid in self.players
         if removed:
+            scene_id = self._entity_scene(self.players[sid])
             del self.players[sid]
             for bid, bullet in list(self.bullets.items()):
                 if bullet.get("owner") == sid:
                     self.bullets.pop(bid, None)
+            self._sweep_empty_room_scene(scene_id)
             if self.intermission:
                 if not self.players:
                     self.intermission = None

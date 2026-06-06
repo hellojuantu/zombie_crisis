@@ -1037,9 +1037,10 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(any(ev == "stage_failed" for ev, _ in events))
         self.assertTrue(any(ev == "wave_start" for ev, _ in events))
 
-    def test_manual_stage_restart_resets_current_stage_from_room(self):
+    def test_abandon_stage_restart_resets_current_stage_from_room(self):
         game, events = self.make_game()
         now = game._now()
+        game.add_player("p2")
         room = next(feature for feature in game.map_features if feature.get("kind") == "room")
         player = game.players["p1"]
         player["x"] = room["x"] + room["w"] / 2
@@ -1048,39 +1049,83 @@ class GameCoreTest(unittest.TestCase):
         game._apply_facility_effects(SERVER_DT, now)
         scene_id = player["scene"]
         self.assertTrue(scene_id.startswith("room:"))
+        player["paused"] = True
+        game.players["p2"]["paused"] = True
 
+        exit_point = {
+            "id": "partial-exit",
+            "type": "service",
+            "name": "维修通道",
+            "text": "半途撤离",
+            "requires": {},
+            "x": player.get("main_x", 1000),
+            "y": player.get("main_y", 1000),
+            "radius": MISSION_CAPTURE_RADIUS,
+            "charge": 0.62,
+            "visible": True,
+            "done": False,
+            "wave": game.wave,
+            "color": "#66d9ff",
+        }
+        game.extractions = [exit_point]
+        game.mission = exit_point
         game.spawn_zombie(x=player["x"] + 140, y=player["y"], ztype="runner", scene=scene_id)
         game.spawn_item(x=player["x"], y=player["y"], item_type="parts", scene=scene_id)
         game.task_counts["fuse"] = 2
         old_wave = game.wave
 
-        self.assertTrue(game.restart_current_stage("p1", reason="manual"))
+        self.assertTrue(game.restart_current_stage("p1", reason="abandon"))
 
         self.assertEqual(game.wave, old_wave)
         self.assertEqual(player["scene"], "main")
         self.assertEqual(player["lives"], PLAYER_STAGE_LIVES)
         self.assertEqual(player["materials"], 7)
         self.assertFalse(player["paused"])
+        self.assertFalse(game.players["p2"]["paused"])
         self.assertEqual(game.task_counts["fuse"], 0)
+        self.assertTrue(game.extractions)
+        self.assertTrue(all(exit_data.get("charge", 0) == 0 for exit_data in game.extractions))
+        self.assertIsNot(game.extractions[0], exit_point)
         self.assertFalse(any(zombie.get("scene") == scene_id for zombie in game.zombies.values()))
         self.assertFalse(any(item.get("scene") == scene_id for item in game.items.values()))
         failed = [data for ev, data in events if ev == "stage_failed"][-1]
-        self.assertEqual(failed["reason"], "manual")
+        self.assertEqual(failed["reason"], "abandon")
         self.assertEqual(failed["scene"], "main")
         self.assertIn("mw", failed)
         self.assertTrue(any(ev == "scene_change" and data["reason"] == "respawn" for ev, data in events))
         self.assertTrue(any(ev == "wave_start" for ev, _ in events))
 
-    def test_manual_stage_restart_is_denied_during_intermission(self):
+    def test_abandon_stage_restart_is_denied_during_intermission(self):
         game, events = self.make_game()
         game.intermission = {"ready": [], "players": ["p1"], "nextWave": game.wave + 1}
 
-        self.assertFalse(game.restart_current_stage("p1", reason="manual"))
+        self.assertFalse(game.restart_current_stage("p1", reason="abandon"))
 
         self.assertIsNotNone(game.intermission)
         denied = [data for ev, data in events if ev == "stage_restart_denied"]
         self.assertEqual(len(denied), 1)
         self.assertIn("整备中", denied[0]["reason"])
+
+    def test_disconnect_inside_room_sweeps_room_entities(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("kind") == "room")
+        player = game.players["p1"]
+        player["x"] = room["x"] + room["w"] / 2
+        player["y"] = room["y"] + room["h"] / 2
+        game._apply_facility_effects(SERVER_DT, now)
+        scene_id = player["scene"]
+        self.assertTrue(scene_id.startswith("room:"))
+
+        zid = game.spawn_zombie(x=player["x"] + 130, y=player["y"], ztype="runner", scene=scene_id)
+        iid = game.spawn_item(x=player["x"], y=player["y"], item_type="parts", scene=scene_id)
+        game.bullets["room-bullet"] = {"owner": "p1", "scene": scene_id, "x": player["x"], "y": player["y"]}
+
+        self.assertTrue(game.remove_player("p1"))
+
+        self.assertNotIn(zid, game.zombies)
+        self.assertNotIn(iid, game.items)
+        self.assertNotIn("room-bullet", game.bullets)
 
     def test_intermission_talent_purchase_spends_parts_and_applies_effect(self):
         game, events = self.make_game()

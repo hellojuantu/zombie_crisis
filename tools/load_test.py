@@ -6,6 +6,7 @@ Example:
 """
 import argparse
 import asyncio
+import json
 import math
 import statistics
 import time
@@ -35,6 +36,13 @@ async def run_client(index, args):
             "bullets": [],
             "items": [],
         },
+        "payload": {
+            "total": [],
+            "players": [],
+            "zombies": [],
+            "bullets": [],
+            "items": [],
+        },
     }
     ping_sent = {}
     ping_seq = 0
@@ -57,6 +65,12 @@ async def run_client(index, args):
             value = perf.get(key)
             if isinstance(value, (int, float)):
                 metrics["perf"][key].append(float(value))
+        sections = {"players": "p", "zombies": "z", "bullets": "b", "items": "i"}
+        for label, key in sections.items():
+            raw = json.dumps((data or {}).get(key, {}), ensure_ascii=False, separators=(",", ":"))
+            metrics["payload"][label].append(len(raw.encode("utf-8")))
+        raw_total = json.dumps(data or {}, ensure_ascii=False, separators=(",", ":"))
+        metrics["payload"]["total"].append(len(raw_total.encode("utf-8")))
 
     @client.on("server_pong")
     async def on_server_pong(data):
@@ -140,6 +154,10 @@ async def main():
         key: [value for r in results for value in r["perf"][key]]
         for key in results[0]["perf"].keys()
     }
+    payload_values = {
+        key: [value for r in results for value in r["payload"][key]]
+        for key in results[0]["payload"].keys()
+    }
 
     def p95(values):
         if not values:
@@ -176,6 +194,16 @@ async def main():
             f"zombies_max={int(max(perf_values['zombies']))} "
             f"bullets_max={int(max(perf_values['bullets']))} "
             f"items_max={int(max(perf_values['items']))}"
+        )
+    if payload_values["total"]:
+        print(
+            "payload_bytes "
+            f"total_avg={statistics.mean(payload_values['total']):.0f} "
+            f"total_p95={p95(payload_values['total']):.0f} "
+            f"players_avg={statistics.mean(payload_values['players']):.0f} "
+            f"zombies_avg={statistics.mean(payload_values['zombies']):.0f} "
+            f"bullets_avg={statistics.mean(payload_values['bullets']):.0f} "
+            f"items_avg={statistics.mean(payload_values['items']):.0f}"
         )
 
 

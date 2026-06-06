@@ -1,9 +1,10 @@
-import { createAudio } from './audio.js?v=41';
-import { createEffects } from './effects.js?v=41';
-import { createRenderer } from './render.js?v=41';
-import { createUI } from './ui.js?v=41';
+import { createAudio } from './audio.js?v=44';
+import { createEffects } from './effects.js?v=44';
+import { createRenderer } from './render.js?v=44';
+import { createUI } from './ui.js?v=44';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
+const { stageFailedMessage } = window.ZCMessages;
 
 let playerSpeed = 315;
 let playerRadius = 17;
@@ -1494,11 +1495,7 @@ function setupSocket() {
     audio.reward();
   });
   sock.on('stage_failed', (data) => {
-    const manual = data.reason === 'manual';
-    ui.notify(
-      manual ? `第 ${data.wave || state.wave} 关已放弃，重新部署` : `第 ${data.wave || state.wave} 关失败，重新部署`,
-      '#ff6666',
-    );
+    ui.notify(stageFailedMessage(data.wave || state.wave, data.reason), '#ff6666');
     if (data.obs) {
       applyScenePayload(data, true);
     } else {

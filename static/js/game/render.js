@@ -259,9 +259,9 @@ export function createRenderer(canvas, minimap) {
   function drawGround(view, mapW, mapH) {
     const { x: cx, y: cy } = view;
     const grad = ctx.createLinearGradient(0, 0, width, height);
-    grad.addColorStop(0, '#171c22');
-    grad.addColorStop(0.55, '#101820');
-    grad.addColorStop(1, '#1b1518');
+    grad.addColorStop(0, '#20262d');
+    grad.addColorStop(0.55, '#172430');
+    grad.addColorStop(1, '#251d21');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
     ctx.strokeStyle = 'rgba(255,255,255,.045)';
@@ -895,7 +895,7 @@ export function createRenderer(canvas, minimap) {
   }
 
   function drawHorrorOverlay(time) {
-    const flicker = 0.03 + Math.sin(time * 0.019) * 0.012;
+    const flicker = 0.016 + Math.sin(time * 0.019) * 0.008;
     const grad = ctx.createRadialGradient(
       width / 2,
       height / 2,
@@ -905,17 +905,17 @@ export function createRenderer(canvas, minimap) {
       Math.max(width, height) * 0.72,
     );
     grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(0.72, `rgba(0,0,0,${0.28 + flicker})`);
-    grad.addColorStop(1, `rgba(0,0,0,${0.72 + flicker})`);
+    grad.addColorStop(0.72, `rgba(0,0,0,${0.12 + flicker})`);
+    grad.addColorStop(1, `rgba(0,0,0,${0.36 + flicker})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
   }
 
-  function lightSpot(x, y, radius, inner = 0.06) {
+  function lightSpot(x, y, radius, inner = 0.94) {
     const grad = ctx.createRadialGradient(x, y, Math.max(1, radius * 0.12), x, y, radius);
     grad.addColorStop(0, `rgba(0,0,0,${inner})`);
-    grad.addColorStop(0.58, 'rgba(0,0,0,.22)');
-    grad.addColorStop(1, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.52, 'rgba(0,0,0,.62)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -924,30 +924,30 @@ export function createRenderer(canvas, minimap) {
 
   function drawDarknessCloud(state, me, myId, visualMe, view, effects, time) {
     const powered = Boolean(state.obj?.powered);
-    const fogFactor = state.fog?.until && state.fog.until > time ? 0.82 : 1;
-    const baseRadius = (powered ? 560 : 330) * fogFactor;
+    const fogFactor = state.fog?.until && state.fog.until > time ? 0.86 : 1;
+    const baseRadius = (powered ? 820 : 680) * fogFactor;
     const playerCenter = {
       x: (visualMe.ready ? visualMe.x : me.x) - view.x,
       y: (visualMe.ready ? visualMe.y : me.y) - view.y,
     };
     ctx.save();
-    ctx.fillStyle = powered ? 'rgba(0,0,0,.82)' : 'rgba(0,0,0,.94)';
+    ctx.fillStyle = powered ? 'rgba(0,0,0,.56)' : 'rgba(0,0,0,.72)';
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
-    lightSpot(playerCenter.x, playerCenter.y, baseRadius, powered ? 0.01 : 0.03);
+    lightSpot(playerCenter.x, playerCenter.y, baseRadius, powered ? 0.98 : 0.94);
     for (const [pid, p] of Object.entries(state.pl || {})) {
       if (pid === myId || p.dead) continue;
-      lightSpot(p.x - view.x, p.y - view.y, powered ? 260 : 190, 0.08);
+      lightSpot(p.x - view.x, p.y - view.y, powered ? 320 : 260, 0.78);
     }
     for (const exit of state.exits || []) {
       if (!exit.visible || exit.done) continue;
-      lightSpot(exit.x - view.x, exit.y - view.y, exit.ready ? 210 : 140, 0.14);
+      lightSpot(exit.x - view.x, exit.y - view.y, exit.ready ? 250 : 185, 0.68);
     }
     for (const ring of effects.rings || []) {
-      lightSpot(ring.x - view.x, ring.y - view.y, Math.min(260, 70 + ring.radius * 0.55), 0.18);
+      lightSpot(ring.x - view.x, ring.y - view.y, Math.min(280, 90 + ring.radius * 0.6), 0.62);
     }
     for (const bullet of Object.values(state.b || {})) {
-      lightSpot(bullet.x - view.x, bullet.y - view.y, bullet.weapon === 'launcher' ? 120 : 70, 0.22);
+      lightSpot(bullet.x - view.x, bullet.y - view.y, bullet.weapon === 'launcher' ? 140 : 82, 0.55);
     }
     ctx.globalCompositeOperation = 'source-over';
     const edge = ctx.createRadialGradient(
@@ -959,12 +959,12 @@ export function createRenderer(canvas, minimap) {
       baseRadius * 1.25,
     );
     edge.addColorStop(0, 'rgba(0,0,0,0)');
-    edge.addColorStop(1, powered ? 'rgba(0,0,0,.28)' : 'rgba(0,0,0,.5)');
+    edge.addColorStop(1, powered ? 'rgba(0,0,0,.12)' : 'rgba(0,0,0,.2)');
     ctx.fillStyle = edge;
     ctx.fillRect(0, 0, width, height);
     for (let i = 0; i < 10; i += 1) {
       const y = ((time * (0.01 + i * 0.001) + i * 131) % (height + 180)) - 90;
-      ctx.fillStyle = `rgba(0,0,0,${powered ? 0.035 : 0.06})`;
+      ctx.fillStyle = `rgba(0,0,0,${powered ? 0.018 : 0.026})`;
       ctx.fillRect(-100, y, width + 200, 22 + (i % 5) * 10);
     }
     ctx.restore();
