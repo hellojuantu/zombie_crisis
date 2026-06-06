@@ -2,6 +2,7 @@ export function createUI() {
   const joinScreen = document.getElementById('join-screen');
   const joinBtn = document.getElementById('joinBtn');
   const restartBtn = document.getElementById('restartBtn');
+  const restartStageBtn = document.getElementById('restartStageBtn');
   const hud = document.getElementById('hud');
   const waveInfo = document.getElementById('wave-info');
   const scoreboard = document.getElementById('scoreboard');
@@ -44,9 +45,10 @@ export function createUI() {
     joinTimer = on ? setTimeout(() => setJoinLoading(false), 8000) : null;
   }
 
-  function bindActions(onJoin, onRestart) {
+  function bindActions(onJoin, onRestart, onRestartStage) {
     joinBtn.onclick = onJoin;
     restartBtn.onclick = onRestart;
+    if (restartStageBtn) restartStageBtn.onclick = onRestartStage;
   }
 
   function bindAudioToggle(onToggle) {

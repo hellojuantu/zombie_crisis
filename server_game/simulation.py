@@ -3664,17 +3664,13 @@ class Game:
             self.spawn_item(item_type="shield", emit=False)
             self.spawn_item(item_type="ammo_explosive", emit=False)
         self._emit("wave_start", {
+            **self._scene_payload(SCENE_MAIN),
             "wave": self.wave,
             "remaining": self.wave_remaining,
             "boss": self._is_boss_wave(),
             "story": self._story_for_wave(),
             "stage": self.stage_director,
             "routeReward": route_reward,
-            "obj": self._objective_snapshot(),
-            "mission": self._mission_snapshot(),
-            "exits": self._extractions_snapshot(),
-            "obs": self.obstacles,
-            "features": self.map_features,
         })
 
     def _complete_mission(self, now, exit_point, players_in_zone):
@@ -4060,6 +4056,7 @@ class Game:
             self._emit_scene_change(pid, reason="respawn")
 
     def _restart_current_stage(self, now, reason="wipe"):
+        self.intermission = None
         self.zombies.clear()
         self.bullets.clear()
         self.items.clear()
@@ -4081,28 +4078,36 @@ class Game:
         self._spawn_wave_burst()
         for _ in range(INITIAL_ITEMS):
             self.spawn_item(emit=False)
+        scene_payload = self._scene_payload(SCENE_MAIN)
         self._emit("stage_failed", {
+            **scene_payload,
             "wave": self.wave,
             "reason": reason,
             "lives": PLAYER_STAGE_LIVES,
-            "obj": self._objective_snapshot(),
-            "mission": self._mission_snapshot(),
-            "exits": self._extractions_snapshot(),
-            "obs": self.obstacles,
-            "features": self.map_features,
         })
         self._emit("wave_start", {
+            **scene_payload,
             "wave": self.wave,
             "remaining": self.wave_remaining,
             "boss": self._is_boss_wave(),
             "story": self._story_for_wave(),
             "stage": self.stage_director,
-            "obj": self._objective_snapshot(),
-            "mission": self._mission_snapshot(),
-            "exits": self._extractions_snapshot(),
-            "obs": self.obstacles,
-            "features": self.map_features,
         })
+
+    def restart_current_stage(self, sid=None, reason="manual"):
+        if not self.running or not self.players:
+            return False
+        if sid and sid not in self.players:
+            return False
+        if self.intermission:
+            targets = [sid] if sid else list(self.players.keys())
+            self._emit_to("stage_restart_denied", {
+                "reason": "整备中不能重开本关，先决定是否进入下一层。",
+                "col": "#ffc247",
+            }, targets)
+            return False
+        self._restart_current_stage(self._now(), reason=reason)
+        return True
 
     def tick(self, dt=SERVER_DT, now=None):
         perf_start = time.perf_counter()

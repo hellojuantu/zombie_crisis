@@ -1037,6 +1037,51 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(any(ev == "stage_failed" for ev, _ in events))
         self.assertTrue(any(ev == "wave_start" for ev, _ in events))
 
+    def test_manual_stage_restart_resets_current_stage_from_room(self):
+        game, events = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("kind") == "room")
+        player = game.players["p1"]
+        player["x"] = room["x"] + room["w"] / 2
+        player["y"] = room["y"] + room["h"] / 2
+        player["materials"] = 7
+        game._apply_facility_effects(SERVER_DT, now)
+        scene_id = player["scene"]
+        self.assertTrue(scene_id.startswith("room:"))
+
+        game.spawn_zombie(x=player["x"] + 140, y=player["y"], ztype="runner", scene=scene_id)
+        game.spawn_item(x=player["x"], y=player["y"], item_type="parts", scene=scene_id)
+        game.task_counts["fuse"] = 2
+        old_wave = game.wave
+
+        self.assertTrue(game.restart_current_stage("p1", reason="manual"))
+
+        self.assertEqual(game.wave, old_wave)
+        self.assertEqual(player["scene"], "main")
+        self.assertEqual(player["lives"], PLAYER_STAGE_LIVES)
+        self.assertEqual(player["materials"], 7)
+        self.assertFalse(player["paused"])
+        self.assertEqual(game.task_counts["fuse"], 0)
+        self.assertFalse(any(zombie.get("scene") == scene_id for zombie in game.zombies.values()))
+        self.assertFalse(any(item.get("scene") == scene_id for item in game.items.values()))
+        failed = [data for ev, data in events if ev == "stage_failed"][-1]
+        self.assertEqual(failed["reason"], "manual")
+        self.assertEqual(failed["scene"], "main")
+        self.assertIn("mw", failed)
+        self.assertTrue(any(ev == "scene_change" and data["reason"] == "respawn" for ev, data in events))
+        self.assertTrue(any(ev == "wave_start" for ev, _ in events))
+
+    def test_manual_stage_restart_is_denied_during_intermission(self):
+        game, events = self.make_game()
+        game.intermission = {"ready": [], "players": ["p1"], "nextWave": game.wave + 1}
+
+        self.assertFalse(game.restart_current_stage("p1", reason="manual"))
+
+        self.assertIsNotNone(game.intermission)
+        denied = [data for ev, data in events if ev == "stage_restart_denied"]
+        self.assertEqual(len(denied), 1)
+        self.assertIn("整备中", denied[0]["reason"])
+
     def test_intermission_talent_purchase_spends_parts_and_applies_effect(self):
         game, events = self.make_game()
         now = game._now()

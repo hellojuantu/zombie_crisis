@@ -203,6 +203,15 @@ async def on_restart(sid, data):
     await sio.emit("game_restart", {})
 
 
+@sio.on("restart_stage")
+async def on_restart_stage(sid, data):
+    await start_background_tasks()
+    async with _game_lock:
+        G.restart_current_stage(sid, reason="manual")
+        events = drain_events()
+    await emit_events(events)
+
+
 asgi_app = socketio.ASGIApp(sio, other_asgi_app=http_app)
 
 

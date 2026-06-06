@@ -1465,18 +1465,12 @@ function setupSocket() {
     ui.setIntermission(null);
     state.wave = data.wave;
     state.wr = data.remaining;
-    state.obj = data.obj || state.obj;
-    state.mission = data.mission || state.mission;
-    state.exits = data.exits || state.exits;
     if (data.obs) {
-      state.obs = data.obs;
-      state.features = data.features || [];
-      state.z = {};
-      state.b = {};
-      state.items = {};
-      state.zt = 0;
-      state.bt = 0;
-      state.it = 0;
+      applyScenePayload(data, true);
+    } else {
+      state.obj = data.obj || state.obj;
+      state.mission = data.mission || state.mission;
+      state.exits = data.exits || state.exits;
     }
     const stageTitle = data.stage?.title || data.obj?.stageTitle;
     ui.notify(
@@ -1500,18 +1494,22 @@ function setupSocket() {
     audio.reward();
   });
   sock.on('stage_failed', (data) => {
-    ui.notify(`第 ${data.wave || state.wave} 关失败，重新部署`, '#ff6666');
-    state.obj = data.obj || state.obj;
-    state.mission = data.mission || state.mission;
-    state.exits = data.exits || state.exits;
+    const manual = data.reason === 'manual';
+    ui.notify(
+      manual ? `第 ${data.wave || state.wave} 关已放弃，重新部署` : `第 ${data.wave || state.wave} 关失败，重新部署`,
+      '#ff6666',
+    );
     if (data.obs) {
-      state.obs = data.obs;
-      state.features = data.features || [];
-      state.z = {};
-      state.b = {};
-      state.items = {};
+      applyScenePayload(data, true);
+    } else {
+      state.obj = data.obj || state.obj;
+      state.mission = data.mission || state.mission;
+      state.exits = data.exits || state.exits;
     }
     audio.playerDeath();
+  });
+  sock.on('stage_restart_denied', (data) => {
+    ui.notify(data.reason || '当前不能重开本关', data.col || '#ffc247');
   });
   sock.on('game_restart', () => {
     inventoryOpen = false;
@@ -1560,6 +1558,21 @@ function restartGame() {
   s.emit('restart_game', {});
 }
 
+function restartStage() {
+  if (!joined) return;
+  if (state.intermission?.active) {
+    ui.notify('整备中不能重开本关', '#ffc247');
+    return;
+  }
+  const s = ensureSocket();
+  if (!s) return;
+  inventoryOpen = false;
+  ui.setInventoryOpen(false);
+  clearInput();
+  ui.notify('放弃本关，重新部署...', '#ffb1bd');
+  s.emit('restart_stage', {});
+}
+
 function continueStage() {
   const s = ensureSocket();
   if (!s || !state.intermission?.active) return;
@@ -1601,7 +1614,7 @@ function setInventoryOpen(open) {
   sendInput(true);
 }
 
-ui.bindActions(joinGame, restartGame);
+ui.bindActions(joinGame, restartGame, restartStage);
 ui.bindAudioToggle(() => {
   audio.setEnabled(!audio.enabled);
   ui.setAudioOn(audio.enabled);

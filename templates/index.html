@@ -285,6 +285,31 @@
         padding: 2px 7px;
         margin-left: 10px;
       }
+      .objective-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .objective-titleline {
+        flex: 1;
+        min-width: 0;
+      }
+      .stage-reset-button {
+        border: 1px solid rgba(255, 141, 157, 0.32);
+        background: rgba(255, 77, 95, 0.08);
+        color: #ffb1bd;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .stage-reset-button:hover {
+        color: #ffe6ea;
+        border-color: rgba(255, 141, 157, 0.58);
+        background: rgba(255, 77, 95, 0.18);
+      }
       #inventory-overlay {
         position: fixed;
         inset: 0;
@@ -939,10 +964,13 @@
     </div>
 
     <div id="wave-info" style="display: none">
-      <div>
-        <span class="ping-badge">Ping <span id="pingstat">--</span></span
-        >第 <span id="wavestat" style="color: #ffc247; font-weight: 800">1</span> 关 · 感染体
-        <span id="zombiestat" style="color: #dce7f1; font-weight: 800">0</span>
+      <div class="objective-head">
+        <div class="objective-titleline">
+          <span class="ping-badge">Ping <span id="pingstat">--</span></span
+          >第 <span id="wavestat" style="color: #ffc247; font-weight: 800">1</span> 关 · 感染体
+          <span id="zombiestat" style="color: #dce7f1; font-weight: 800">0</span>
+        </div>
+        <button class="stage-reset-button" id="restartStageBtn" type="button">放弃本关</button>
       </div>
       <div id="objtitle" style="font-weight: 800; color: #ff4d5f; margin-top: 4px">搜寻撤离点</div>
       <div id="objstat">收集任务物</div>
@@ -1043,13 +1071,13 @@
     <canvas id="gameCanvas"></canvas>
     <canvas id="minimap" width="150" height="150"></canvas>
 
-    <script src="/static/vendor/socket.io.min.js?v=41"></script>
-    <script src="/static/js/protocol.js?v=41"></script>
-    <script src="/static/js/prediction.js?v=41"></script>
-    <script src="/static/js/interpolation.js?v=41"></script>
-    <script src="/static/js/camera.js?v=41"></script>
-    <script src="/static/js/timing.js?v=41"></script>
-    <script src="/static/js/netcode.js?v=41"></script>
-    <script type="module" src="/static/js/game/app.js?v=41"></script>
+    <script src="/static/vendor/socket.io.min.js?v=42"></script>
+    <script src="/static/js/protocol.js?v=42"></script>
+    <script src="/static/js/prediction.js?v=42"></script>
+    <script src="/static/js/interpolation.js?v=42"></script>
+    <script src="/static/js/camera.js?v=42"></script>
+    <script src="/static/js/timing.js?v=42"></script>
+    <script src="/static/js/netcode.js?v=42"></script>
+    <script type="module" src="/static/js/game/app.js?v=42"></script>
   </body>
 </html>

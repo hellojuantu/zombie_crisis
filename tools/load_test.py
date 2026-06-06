@@ -26,6 +26,15 @@ async def run_client(index, args):
         "sync": 0,
         "errors": 0,
         "rtt": [],
+        "perf": {
+            "tick_ms": [],
+            "snap_ms": [],
+            "sync_ms": [],
+            "players": [],
+            "zombies": [],
+            "bullets": [],
+            "items": [],
+        },
     }
     ping_sent = {}
     ping_seq = 0
@@ -43,6 +52,11 @@ async def run_client(index, args):
     @client.on("sync")
     async def on_sync(data):
         metrics["sync"] += 1
+        perf = (data or {}).get("perf") or {}
+        for key in metrics["perf"].keys():
+            value = perf.get(key)
+            if isinstance(value, (int, float)):
+                metrics["perf"][key].append(float(value))
 
     @client.on("server_pong")
     async def on_server_pong(data):
@@ -122,21 +136,47 @@ async def main():
     errors = sum(r["errors"] for r in results)
     sync = sum(r["sync"] for r in results)
     rtts = [value for r in results for value in r["rtt"]]
+    perf_values = {
+        key: [value for r in results for value in r["perf"][key]]
+        for key in results[0]["perf"].keys()
+    }
+
+    def p95(values):
+        if not values:
+            return 0
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
 
     print(f"clients={args.clients} connected={connected} joined={joined} errors={errors}")
     print(f"elapsed={elapsed:.1f}s sync_packets={sync} sync_per_client={sync / max(1, joined):.1f}")
     if rtts:
-        sorted_rtts = sorted(rtts)
-        p95 = sorted_rtts[min(len(sorted_rtts) - 1, int(len(sorted_rtts) * 0.95))]
         print(
             "rtt_ms "
             f"avg={statistics.mean(rtts):.1f} "
             f"p50={statistics.median(rtts):.1f} "
-            f"p95={p95:.1f} "
+            f"p95={p95(rtts):.1f} "
             f"max={max(rtts):.1f}"
         )
     else:
         print("rtt_ms none")
+    if perf_values["tick_ms"]:
+        print(
+            "server_perf_ms "
+            f"tick_avg={statistics.mean(perf_values['tick_ms']):.2f} "
+            f"tick_p95={p95(perf_values['tick_ms']):.2f} "
+            f"tick_max={max(perf_values['tick_ms']):.2f} "
+            f"snap_avg={statistics.mean(perf_values['snap_ms']):.2f} "
+            f"snap_p95={p95(perf_values['snap_ms']):.2f} "
+            f"sync_avg={statistics.mean(perf_values['sync_ms']):.2f} "
+            f"sync_p95={p95(perf_values['sync_ms']):.2f}"
+        )
+        print(
+            "server_counts "
+            f"players_max={int(max(perf_values['players']))} "
+            f"zombies_max={int(max(perf_values['zombies']))} "
+            f"bullets_max={int(max(perf_values['bullets']))} "
+            f"items_max={int(max(perf_values['items']))}"
+        )
 
 
 if __name__ == "__main__":
