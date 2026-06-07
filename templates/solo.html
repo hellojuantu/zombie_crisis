@@ -1054,6 +1054,80 @@
           display: block;
         }
       }
+
+      /* ════════════════════════════════════════════════════
+         TOUCH-UI  –  compact gameplay HUD for mobile
+         <body class="touch-ui"> set by JS on touch devices
+         ════════════════════════════════════════════════════ */
+      .touch-ui #hud {
+        top: 0; left: 0;
+        max-width: 54%;
+        min-width: 0;
+        border-radius: 0 0 8px 0;
+        border-top: none; border-left: none;
+        padding: 5px 32px 5px 9px;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+      .touch-ui #wave-info {
+        top: 0; right: 0;
+        max-width: 46%;
+        min-width: 0;
+        border-radius: 0 0 0 8px;
+        border-top: none; border-right: none;
+        padding: 5px 8px;
+        font-size: 11px;
+        line-height: 1.3;
+      }
+      /* Hidden on mobile */
+      .touch-ui #scoreboard          { display: none !important; }
+      .touch-ui #minimap             { display: none !important; }
+      .touch-ui #audioBtn            { display: none !important; }
+      .touch-ui #pname               { display: none; }
+      .touch-ui .hud-extra           { display: none; }
+      .touch-ui .weapon-hint         { display: none; }
+      .touch-ui #exitlist            { display: none; }
+      .touch-ui #mysterylog          { display: none; }
+      .touch-ui #storyline           { display: none; }
+      .touch-ui .stage-reset-button  { display: none; }
+      /* "生命" label — 2nd child of #hud */
+      .touch-ui #hud > div:nth-child(2) { display: none; }
+      /* Compact HUD elements */
+      .touch-ui .big                 { font-size: 14px; }
+      .touch-ui .loadout             { margin-top: 3px; padding-top: 3px; border-top-width: 1px; }
+      .touch-ui .weapon-head b       { font-size: 13px; }
+      .touch-ui .statusline          { font-size: 11px; margin-top: 1px; }
+      .touch-ui .weaponbelt          { margin-top: 3px; gap: 3px; }
+      .touch-ui .weaponchip          { font-size: 10px; padding: 2px 5px; min-width: 30px; }
+      .touch-ui .bag-button          { width: 26px; height: 26px; top: 4px; right: 4px; }
+      .touch-ui .bag-symbol          { width: 13px; height: 14px; }
+      .touch-ui .bag-symbol::before  { left: 2px; right: 2px; top: -6px; height: 7px; }
+      .touch-ui .bag-symbol::after   { left: 2px; right: 2px; top: 5px; }
+      .touch-ui .bag-badge           { min-width: 14px; height: 14px; font-size: 9px;
+                                        line-height: 14px; padding: 0 3px; right: -4px; top: -4px; }
+      /* Compact wave-info elements */
+      .touch-ui .objective-head      { gap: 3px; }
+      .touch-ui .objective-titleline { font-size: 11px; }
+      .touch-ui .ping-badge          { font-size: 10px; padding: 1px 4px; margin-left: 3px; }
+      .touch-ui #objtitle            { font-size: 11px; margin-top: 2px; }
+      .touch-ui #objstat             { font-size: 10px; color: #9aa4af; margin-top: 0; }
+      .touch-ui .progress            { height: 3px; margin-top: 2px; }
+      .touch-ui .taskgrid            { margin-top: 3px; gap: 3px; flex-wrap: nowrap; overflow: hidden; }
+      .touch-ui .taskpill            { min-width: 46px; padding: 2px 4px; }
+      .touch-ui .taskpill b,
+      .touch-ui .taskpill span       { font-size: 10px; }
+      /* Overlay panels */
+      .touch-ui .intermission-panel  { padding: 16px; }
+      .touch-ui .intermission-panel h2 { font-size: 22px; }
+      .touch-ui .intermission-grid   { grid-template-columns: 1fr; gap: 10px; margin-top: 12px; }
+      .touch-ui #death-overlay .msg  { font-size: 24px; }
+      .touch-ui #death-overlay .sub  { font-size: 13px; }
+      .touch-ui .intro-card          { padding: 16px; }
+      .touch-ui .intro-card h3       { font-size: 18px; margin-bottom: 8px; }
+      .touch-ui .intro-steps         { gap: 6px; margin: 8px 0 12px; }
+      .touch-ui .intro-step          { padding: 7px 10px; font-size: 13px; gap: 8px; }
+      .touch-ui .intro-key           { min-width: 52px; font-size: 12px; padding: 4px 6px; }
+      .touch-ui .intro-note          { font-size: 12px; }
     </style>
   </head>
   <body>
@@ -1098,6 +1172,7 @@
       (function () {
         var touch = navigator.maxTouchPoints >= 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (touch) {
+          document.body.classList.add('touch-ui');
           var g = document.getElementById('touchGuide');
           if (g) g.style.display = 'block';
           var h = document.getElementById('pcHints');

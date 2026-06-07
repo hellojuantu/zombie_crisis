@@ -18,8 +18,7 @@
     if (activeKeys[key]) return;
     activeKeys[key] = true;
     window.dispatchEvent(new KeyboardEvent('keydown', {
-      key: key,
-      code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
+      key: key, code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
       bubbles: true, cancelable: true,
     }));
   }
@@ -27,15 +26,11 @@
     if (!activeKeys[key]) return;
     activeKeys[key] = false;
     window.dispatchEvent(new KeyboardEvent('keyup', {
-      key: key,
-      code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
+      key: key, code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
       bubbles: true, cancelable: true,
     }));
   }
-  function tapKey(key) {
-    pressKey(key);
-    setTimeout(function () { releaseKey(key); }, 80);
-  }
+  function tapKey(key) { pressKey(key); setTimeout(function () { releaseKey(key); }, 90); }
 
   /* ── mouse helpers ───────────────────────────────────────────────────────── */
   function aimAt(cx, cy) {
@@ -43,11 +38,9 @@
   }
   function startFire(cx, cy) {
     aimAt(cx, cy);
-    var canvas = document.getElementById('gameCanvas');
-    var target = canvas || document.body;
-    target.dispatchEvent(new MouseEvent('mousedown', {
-      button: 0, buttons: 1, clientX: cx, clientY: cy,
-      bubbles: true, cancelable: true,
+    var canvas = document.getElementById('gameCanvas') || document.body;
+    canvas.dispatchEvent(new MouseEvent('mousedown', {
+      button: 0, buttons: 1, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
     }));
   }
   function stopFire() {
@@ -57,16 +50,12 @@
   /* ── joystick ────────────────────────────────────────────────────────────── */
   function updateJoystick(dx, dy) {
     var d = Math.hypot(dx, dy);
-    var clampD = Math.min(d, MAX_R);
+    var c = Math.min(d, MAX_R);
     if (jThumb) {
-      var tx = d > 0 ? (dx / d) * clampD : 0;
-      var ty = d > 0 ? (dy / d) * clampD : 0;
+      var tx = d > 0 ? (dx / d) * c : 0, ty = d > 0 ? (dy / d) * c : 0;
       jThumb.style.transform = 'translate(calc(-50% + ' + tx + 'px), calc(-50% + ' + ty + 'px))';
     }
-    if (d < DEAD) {
-      releaseKey('w'); releaseKey('s'); releaseKey('a'); releaseKey('d');
-      return;
-    }
+    if (d < DEAD) { releaseKey('w'); releaseKey('s'); releaseKey('a'); releaseKey('d'); return; }
     var nx = dx / d, ny = dy / d, t = 0.36;
     if (ny < -t) pressKey('w'); else releaseKey('w');
     if (ny > t)  pressKey('s'); else releaseKey('s');
@@ -84,58 +73,40 @@
   function mkBtn(icon, label, styles) {
     var wrap = el('div', Object.assign({
       position: 'absolute',
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', gap: '3px',
-      userSelect: 'none', WebkitUserSelect: 'none',
-      touchAction: 'none', cursor: 'pointer',
-      pointerEvents: 'auto',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
+      userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none',
+      cursor: 'pointer', pointerEvents: 'none',
     }, styles || {}));
 
     var circle = el('div', {
-      width: '52px', height: '52px',
-      borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.22)',
-      background: 'rgba(16,20,28,0.72)',
+      width: '50px', height: '50px', borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.20)',
+      background: 'rgba(14,18,26,0.78)',
       backdropFilter: 'blur(6px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: '18px', fontWeight: '900',
-      color: 'rgba(220,231,241,0.85)',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07)',
-      transition: 'background 0.08s, border-color 0.08s',
+      fontSize: '17px', fontWeight: '900', color: 'rgba(210,225,241,0.88)',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.07)',
+      transition: 'background 0.07s, border-color 0.07s, color 0.07s',
     });
     circle.textContent = icon;
 
     var lbl = el('div', {
-      fontSize: '10px',
-      color: 'rgba(158,168,180,0.8)',
-      fontWeight: '600',
-      letterSpacing: '0.5px',
-      whiteSpace: 'nowrap',
+      fontSize: '10px', color: 'rgba(148,160,174,0.82)',
+      fontWeight: '600', letterSpacing: '0.3px', whiteSpace: 'nowrap',
     });
     lbl.textContent = label;
 
     wrap.appendChild(circle);
     wrap.appendChild(lbl);
-
-    function press(e) {
-      e.preventDefault(); e.stopPropagation();
-      Object.assign(circle.style, {
-        background: 'rgba(72,240,160,0.22)',
-        borderColor: 'rgba(72,240,160,0.55)',
-        color: '#48f0a0',
-      });
-    }
-    function release(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      Object.assign(circle.style, {
-        background: 'rgba(16,20,28,0.72)',
-        borderColor: 'rgba(255,255,255,0.22)',
-        color: 'rgba(220,231,241,0.85)',
-      });
-    }
-    wrap._press = press;
-    wrap._release = release;
     wrap._circle = circle;
+    wrap._press = function (e) {
+      e.preventDefault(); e.stopPropagation();
+      Object.assign(circle.style, { background: 'rgba(72,240,160,0.24)', borderColor: 'rgba(72,240,160,0.6)', color: '#48f0a0' });
+    };
+    wrap._release = function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      Object.assign(circle.style, { background: 'rgba(14,18,26,0.78)', borderColor: 'rgba(255,255,255,0.20)', color: 'rgba(210,225,241,0.88)' });
+    };
     return wrap;
   }
 
@@ -144,98 +115,125 @@
     /* portrait warning */
     var portrait = el('div', {
       position: 'fixed', inset: '0', zIndex: '9999',
-      background: '#050608',
-      display: 'none',
+      background: '#050608', display: 'none',
       flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      color: '#edf2f7',
-      fontFamily: 'Microsoft YaHei, Arial, sans-serif',
-      fontSize: '18px', textAlign: 'center',
-      pointerEvents: 'auto',
+      color: '#edf2f7', fontFamily: 'Microsoft YaHei, Arial, sans-serif',
+      fontSize: '18px', textAlign: 'center', pointerEvents: 'auto',
     });
     portrait.id = 'tc-portrait';
     portrait.innerHTML =
-      '<div style="font-size:64px;margin-bottom:20px;transform:rotate(90deg);display:inline-block">&#x2B62;</div>' +
+      '<div style="width:60px;height:60px;border:2.5px solid #48f0a0;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:18px;font-size:28px;color:#48f0a0">&#x21BB;</div>' +
       '<div style="font-weight:800;font-size:20px">请将设备横屏</div>' +
-      '<div style="color:#9aa4af;font-size:14px;margin-top:10px">竖屏不支持游戏操作</div>';
+      '<div style="color:#9aa4af;font-size:13px;margin-top:10px">竖屏不支持游戏操作</div>';
     document.body.appendChild(portrait);
 
     /* main overlay */
     var overlay = el('div', {
       position: 'fixed', inset: '0', zIndex: '55',
-      pointerEvents: 'none',
+      pointerEvents: 'none', touchAction: 'none',
       userSelect: 'none', WebkitUserSelect: 'none',
-      touchAction: 'none',
     });
     overlay.id = 'tc-overlay';
     document.body.appendChild(overlay);
 
-    /* left zone (joystick) */
+    /* left zone */
     var leftZone = el('div', {
-      position: 'absolute',
-      left: '0', top: '0',
+      position: 'absolute', left: '0', top: '0',
       width: '44%', height: '100%',
-      pointerEvents: 'none', /* enabled after game starts */
-      touchAction: 'none',
+      pointerEvents: 'none', touchAction: 'none',
     });
     overlay.appendChild(leftZone);
 
     /* joystick visual */
     jBaseEl = el('div', {
       position: 'absolute',
-      left: '22%', bottom: '18%',
-      width: '136px', height: '136px',
+      left: '22%', bottom: '90px',
+      width: '140px', height: '140px',
       borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.12)',
-      background: 'rgba(16,20,28,0.52)',
-      backdropFilter: 'blur(4px)',
+      border: '1.5px solid rgba(255,255,255,0.10)',
+      background: 'rgba(14,18,26,0.45)',
+      backdropFilter: 'blur(3px)',
       transform: 'translate(-50%, 50%)',
       pointerEvents: 'none',
-      transition: 'opacity 0.2s',
-      opacity: '0.6',
+      opacity: '0.55',
+      transition: 'opacity 0.18s',
     });
     leftZone.appendChild(jBaseEl);
 
     jThumb = el('div', {
-      position: 'absolute',
-      left: '50%', top: '50%',
-      width: '54px', height: '54px',
-      borderRadius: '50%',
-      border: '1.5px solid rgba(72,240,160,0.5)',
-      background: 'rgba(72,240,160,0.15)',
+      position: 'absolute', left: '50%', top: '50%',
+      width: '56px', height: '56px', borderRadius: '50%',
+      border: '1.5px solid rgba(72,240,160,0.52)',
+      background: 'rgba(72,240,160,0.14)',
       transform: 'translate(-50%, -50%)',
       pointerEvents: 'none',
-      boxShadow: '0 0 12px rgba(72,240,160,0.18)',
+      boxShadow: '0 0 14px rgba(72,240,160,0.18)',
     });
     jBaseEl.appendChild(jThumb);
 
-    /* right zone (fire/aim) */
+    /* right zone */
     var rightZone = el('div', {
-      position: 'absolute',
-      right: '0', top: '0',
+      position: 'absolute', right: '0', top: '0',
       width: '56%', height: '100%',
-      pointerEvents: 'none', /* enabled after game starts */
-      touchAction: 'none',
+      pointerEvents: 'none', touchAction: 'none',
     });
     overlay.appendChild(rightZone);
 
-    /* ── action buttons ─────────────────────────────────────────────────── */
-    var reloadBtn  = mkBtn('↺', '换弹', { bottom: '10%', left: 'calc(44% - 88px)' });
-    var dashBtn    = mkBtn('»', '冲刺', { bottom: '10%', left: 'calc(44% - 22px)' });
-    var wPrevBtn   = mkBtn('<',  '上枪', { bottom: '10%', right: '19%' });
-    var wNextBtn   = mkBtn('>',  '下枪', { bottom: '10%', right: '11%' });
-    var bagBtn     = mkBtn('≡', '背包', { bottom: '10%', right: '3%' });
+    /* aim dot – appears at touch point in fire zone */
+    var aimDot = el('div', {
+      position: 'absolute', display: 'none',
+      width: '22px', height: '22px', borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.55)',
+      background: 'rgba(255,255,255,0.10)',
+      transform: 'translate(-50%, -50%)',
+      pointerEvents: 'none',
+      boxShadow: '0 0 8px rgba(255,255,255,0.12)',
+    });
+    rightZone.appendChild(aimDot);
 
-    var allBtns = [reloadBtn, dashBtn, wPrevBtn, wNextBtn, bagBtn];
-    allBtns.forEach(function (b) {
-      b.style.pointerEvents = 'none'; /* enabled after game starts */
-      overlay.appendChild(b);
+    /* aim crosshair lines */
+    ['w','h'].forEach(function(axis) {
+      var line = el('div', {
+        position: 'absolute',
+        background: 'rgba(255,255,255,0.35)',
+        borderRadius: '1px',
+        transform: axis === 'w' ? 'translate(-50%, -50%)' : 'translate(-50%, -50%)',
+        pointerEvents: 'none',
+        width:  axis === 'w' ? '14px' : '1.5px',
+        height: axis === 'w' ? '1.5px' : '14px',
+      });
+      aimDot.appendChild(line);
     });
 
-    /* button handlers */
+    /* fire zone label (fades after first touch) */
+    var fireHint = el('div', {
+      position: 'absolute', left: '50%', top: '50%',
+      transform: 'translate(-50%, -50%)',
+      color: 'rgba(255,255,255,0.14)',
+      fontSize: '12px', fontWeight: '600', letterSpacing: '0.5px',
+      pointerEvents: 'none', whiteSpace: 'nowrap',
+      transition: 'opacity 0.6s',
+      fontFamily: 'Microsoft YaHei, Arial, sans-serif',
+    });
+    fireHint.textContent = '触控瞄准';
+    rightZone.appendChild(fireHint);
+
+    /* ── action buttons ────────────────────────────────────────────────────── */
+    /* Left-side: Reload and Dash – near left thumb bottom area */
+    var reloadBtn = mkBtn('↺', '换弹',  { bottom: '8px', left: 'calc(44% - 122px)' });
+    var dashBtn   = mkBtn('»', '冲刺',  { bottom: '8px', left: 'calc(44% - 58px)'  });
+    /* Right-side: Weapon prev/next and Bag – accessible to right thumb */
+    var wPrevBtn  = mkBtn('<',  '上枪', { bottom: '8px', right: '156px' });
+    var wNextBtn  = mkBtn('>',  '下枪', { bottom: '8px', right: '88px'  });
+    var bagBtn    = mkBtn('≡', '背包',  { bottom: '8px', right: '16px'  });
+
+    var allBtns = [reloadBtn, dashBtn, wPrevBtn, wNextBtn, bagBtn];
+    allBtns.forEach(function (b) { overlay.appendChild(b); });
+
     function bindBtn(b, fn) {
       b.addEventListener('touchstart', function (e) { b._press(e); fn(); }, { passive: false });
       b.addEventListener('touchend',   function (e) { b._release(e); }, { passive: false });
-      b.addEventListener('touchcancel', function ()  { b._release(); }, { passive: false });
+      b.addEventListener('touchcancel', function ()  { b._release(); });
     }
     bindBtn(reloadBtn, function () { tapKey('r'); });
     bindBtn(dashBtn,   function () { tapKey(' '); });
@@ -243,7 +241,7 @@
     bindBtn(wNextBtn,  function () { tapKey('e'); });
     bindBtn(bagBtn,    function () { tapKey('b'); });
 
-    /* ── joystick handlers ──────────────────────────────────────────────── */
+    /* ── joystick touch ────────────────────────────────────────────────────── */
     leftZone.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
@@ -252,11 +250,11 @@
         var rect = leftZone.getBoundingClientRect();
         jBaseX = t.clientX; jBaseY = t.clientY;
         Object.assign(jBaseEl.style, {
-          left: (t.clientX - rect.left) + 'px',
-          top:  (t.clientY - rect.top)  + 'px',
+          left:   (t.clientX - rect.left) + 'px',
+          top:    (t.clientY - rect.top)  + 'px',
           bottom: 'auto',
           transform: 'translate(-50%, -50%)',
-          opacity: '1',
+          opacity: '0.9',
         });
         updateJoystick(0, 0);
       }
@@ -266,8 +264,7 @@
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
         var t = e.changedTouches[i];
-        if (t.identifier === jTouchId)
-          updateJoystick(t.clientX - jBaseX, t.clientY - jBaseY);
+        if (t.identifier === jTouchId) updateJoystick(t.clientX - jBaseX, t.clientY - jBaseY);
       }
     }, { passive: false });
 
@@ -278,9 +275,9 @@
           jTouchId = null;
           updateJoystick(0, 0);
           Object.assign(jBaseEl.style, {
-            left: '22%', top: 'auto', bottom: '18%',
+            left: '22%', top: 'auto', bottom: '90px',
             transform: 'translate(-50%, 50%)',
-            opacity: '0.6',
+            opacity: '0.55',
           });
         }
       }
@@ -288,12 +285,21 @@
     leftZone.addEventListener('touchend',   jEnd, { passive: false });
     leftZone.addEventListener('touchcancel', jEnd, { passive: false });
 
-    /* ── fire zone handlers ─────────────────────────────────────────────── */
+    /* ── fire zone touch ───────────────────────────────────────────────────── */
+    var fireHintFaded = false;
     rightZone.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
       if (aimTouchId === null) {
         aimTouchId = t.identifier;
+        var rect = rightZone.getBoundingClientRect();
+        aimDot.style.display = 'block';
+        aimDot.style.left = (t.clientX - rect.left) + 'px';
+        aimDot.style.top  = (t.clientY - rect.top)  + 'px';
+        if (!fireHintFaded) {
+          fireHintFaded = true;
+          fireHint.style.opacity = '0';
+        }
         startFire(t.clientX, t.clientY);
       }
     }, { passive: false });
@@ -302,7 +308,12 @@
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
         var t = e.changedTouches[i];
-        if (t.identifier === aimTouchId) aimAt(t.clientX, t.clientY);
+        if (t.identifier === aimTouchId) {
+          var rect = rightZone.getBoundingClientRect();
+          aimDot.style.left = (t.clientX - rect.left) + 'px';
+          aimDot.style.top  = (t.clientY - rect.top)  + 'px';
+          aimAt(t.clientX, t.clientY);
+        }
       }
     }, { passive: false });
 
@@ -311,6 +322,7 @@
       for (var i = 0; i < e.changedTouches.length; i++) {
         if (e.changedTouches[i].identifier === aimTouchId) {
           aimTouchId = null;
+          aimDot.style.display = 'none';
           stopFire();
         }
       }
@@ -318,7 +330,7 @@
     rightZone.addEventListener('touchend',   fireEnd, { passive: false });
     rightZone.addEventListener('touchcancel', fireEnd, { passive: false });
 
-    /* ── enable zones once game starts (join-screen hides) ──────────────── */
+    /* ── enable zones after join-screen hides ──────────────────────────────── */
     function setActive(on) {
       var pe = on ? 'auto' : 'none';
       leftZone.style.pointerEvents  = pe;
@@ -326,10 +338,11 @@
       allBtns.forEach(function (b) {
         b.style.pointerEvents = pe;
         b.style.opacity = on ? '1' : '0';
+        b.style.transition = 'opacity 0.2s';
       });
       if (!on) {
         releaseKey('w'); releaseKey('s'); releaseKey('a'); releaseKey('d');
-        if (aimTouchId !== null) { stopFire(); aimTouchId = null; }
+        if (aimTouchId !== null) { stopFire(); aimTouchId = null; aimDot.style.display = 'none'; }
       }
     }
 
@@ -339,23 +352,18 @@
         setActive(joinScreen.style.display === 'none');
       }).observe(joinScreen, { attributes: true, attributeFilter: ['style'] });
     }
-    setActive(false); /* start inactive */
+    setActive(false);
 
-    /* ── orientation ────────────────────────────────────────────────────── */
+    /* ── orientation ───────────────────────────────────────────────────────── */
     function checkOrientation() {
-      var isPortrait = window.innerWidth < window.innerHeight;
-      portrait.style.display = isPortrait ? 'flex' : 'none';
+      var p = window.innerWidth < window.innerHeight;
+      portrait.style.display = p ? 'flex' : 'none';
     }
     window.addEventListener('resize', checkOrientation);
-    window.addEventListener('orientationchange', function () {
-      setTimeout(checkOrientation, 120);
-    });
+    window.addEventListener('orientationchange', function () { setTimeout(checkOrientation, 120); });
     checkOrientation();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', build);
-  } else {
-    build();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build);
+  else build();
 })();
