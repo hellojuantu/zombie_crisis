@@ -765,6 +765,9 @@ function sendInput(force = false) {
 }
 
 function createSocket() {
+  if (window.SP_MODE && window.ZCSimulationSP) {
+    return window.ZCSimulationSP.create();
+  }
   if (typeof window.io !== 'function') {
     ui.setJoinLoading(false);
     ui.notify('本地运行脚本加载失败', '#ff6666');
@@ -1885,6 +1888,7 @@ function loop(ts) {
   updateAim();
   const inIntermission = Boolean(state.intermission?.active);
   if (joined) sendInput(dashReq || interactReq || fireReq || inputDirty);
+  if (joined && sock?.tick) sock.tick(dt, ts / 1000);
   if (joined && !me.dead && !inventoryOpen && !inIntermission && scenePayloadReady) {
     if (me.vehicle && me.vehicleCd > 0) me.vehicleCd = Math.max(0, me.vehicleCd - dt);
     localDash(ts / 1000);
