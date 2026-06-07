@@ -898,6 +898,114 @@
         padding: 8px 12px;
         font-size: 13px;
       }
+      .touch-guide {
+        display: none;
+        margin-top: 16px;
+        width: min(500px, calc(100vw - 36px));
+      }
+      .touch-guide-zones {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .touch-guide-zone {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.045);
+        border-radius: 8px;
+        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .touch-guide-circle {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(72, 240, 160, 0.45);
+        background: rgba(72, 240, 160, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 40px;
+        font-size: 18px;
+        color: #48f0a0;
+        font-weight: 900;
+      }
+      .touch-guide-text b {
+        display: block;
+        font-size: 13px;
+        color: #edf2f7;
+        font-weight: 800;
+      }
+      .touch-guide-text span {
+        font-size: 12px;
+        color: #9aa4af;
+      }
+      .touch-guide-btns {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+      }
+      .touch-guide-btn {
+        flex: 1;
+        max-width: 80px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 7px;
+        padding: 7px 6px 6px;
+        text-align: center;
+      }
+      .touch-guide-btn .tg-icon {
+        display: block;
+        font-size: 17px;
+        font-weight: 900;
+        color: #dce7f1;
+        line-height: 1.2;
+      }
+      .touch-guide-btn .tg-label {
+        display: block;
+        font-size: 11px;
+        color: #9aa4af;
+        margin-top: 3px;
+      }
+      @media (pointer: coarse) and (orientation: landscape) {
+        #join-screen h1 {
+          font-size: 34px;
+          margin-bottom: 4px;
+        }
+        #join-screen h2 {
+          font-size: 12px;
+          margin: 4px 0 14px;
+        }
+        .btn {
+          padding: 10px 28px;
+          font-size: 16px;
+          margin: 3px;
+        }
+        .touch-guide {
+          margin-top: 10px;
+        }
+        .touch-guide-zone {
+          padding: 7px 10px;
+          gap: 8px;
+        }
+        .touch-guide-circle {
+          width: 32px;
+          height: 32px;
+          flex: 0 0 32px;
+          font-size: 14px;
+        }
+        .touch-guide-text b {
+          font-size: 12px;
+        }
+        .touch-guide-text span {
+          font-size: 11px;
+        }
+        .touch-guide-btns {
+          gap: 5px;
+        }
+      }
       #death-overlay {
         position: fixed;
         inset: 0;
@@ -957,18 +1065,43 @@
       <div style="margin-top:10px">
         <a href="/" style="color:#a7b1bd;font-size:14px;text-decoration:none;opacity:0.8">← 多人联机版</a>
       </div>
-      <div class="ci">
+      <div class="ci" id="pcHints">
         <span>WASD</span> 移动 · <span>鼠标</span> 瞄准 · <span>左键</span> 攻击 · <span>右键/QE</span> 换枪 ·
         <span>R</span> 换弹 · <span>空格/Shift</span> 冲刺<br />消灭所有感染体后前往撤离终端
       </div>
-      <div class="mobile-warning" id="mobileWarning">手机请<b style="color:#48f0a0">横屏</b>游玩，虚拟摇杆已就绪。</div>
+      <div class="touch-guide" id="touchGuide">
+        <div class="touch-guide-zones">
+          <div class="touch-guide-zone">
+            <div class="touch-guide-circle">&#x25CB;</div>
+            <div class="touch-guide-text">
+              <b>左区摇杆</b>
+              <span>拖动控制移动</span>
+            </div>
+          </div>
+          <div class="touch-guide-zone">
+            <div class="touch-guide-circle">&#x2295;</div>
+            <div class="touch-guide-text">
+              <b>右区触控</b>
+              <span>瞄准 + 按下射击</span>
+            </div>
+          </div>
+        </div>
+        <div class="touch-guide-btns">
+          <div class="touch-guide-btn"><span class="tg-icon">&#x21BA;</span><span class="tg-label">换弹</span></div>
+          <div class="touch-guide-btn"><span class="tg-icon">&raquo;</span><span class="tg-label">冲刺</span></div>
+          <div class="touch-guide-btn"><span class="tg-icon">&lt; &gt;</span><span class="tg-label">换枪</span></div>
+          <div class="touch-guide-btn"><span class="tg-icon">&#x2261;</span><span class="tg-label">背包</span></div>
+        </div>
+      </div>
     </div>
     <script>
       (function () {
         var touch = navigator.maxTouchPoints >= 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (touch) {
-          var w = document.getElementById('mobileWarning');
-          if (w) w.style.display = 'block';
+          var g = document.getElementById('touchGuide');
+          if (g) g.style.display = 'block';
+          var h = document.getElementById('pcHints');
+          if (h) h.style.display = 'none';
         }
       })();
     </script>
