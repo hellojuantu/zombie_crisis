@@ -965,7 +965,7 @@
     </div>
     <script>
       (function () {
-        var touch = navigator.maxTouchPoints > 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        var touch = navigator.maxTouchPoints >= 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (touch) {
           var w = document.getElementById('mobileWarning');
           if (w) w.style.display = 'block';

@@ -961,16 +961,14 @@
         <span>WASD</span> 移动 · <span>鼠标</span> 瞄准 · <span>左键</span> 攻击 · <span>右键/QE</span> 换枪 ·
         <span>R</span> 换弹 · <span>空格/Shift</span> 冲刺<br />消灭所有感染体后前往撤离终端
       </div>
-      <div class="mobile-warning" id="mobileWarning">手机 / 触屏不支持，请使用电脑和鼠标键盘游玩。</div>
+      <div class="mobile-warning" id="mobileWarning">手机请<b style="color:#48f0a0">横屏</b>游玩，虚拟摇杆已就绪。</div>
     </div>
     <script>
       (function () {
-        var touch = navigator.maxTouchPoints > 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        var touch = navigator.maxTouchPoints >= 1 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (touch) {
           var w = document.getElementById('mobileWarning');
           if (w) w.style.display = 'block';
-          var btn = document.getElementById('joinBtn');
-          if (btn) { btn.disabled = true; btn.textContent = '暂不支持手机'; }
         }
       })();
     </script>
@@ -1119,8 +1117,9 @@
     <script src="/static/js/netcode.js?v=62"></script>
     <script src="/static/js/game/messages.js?v=62"></script>
     <script src="/static/js/game/scene_filter.js?v=62"></script>
-    <script src="/static/js/game/simulation_sp.js?v=1"></script>
+    <script src="/static/js/game/simulation_sp.js?v=2"></script>
     <script>window.SP_MODE = true;</script>
+    <script src="/static/js/game/touch_controls.js?v=1"></script>
     <script type="module" src="/static/js/game/app.js?v=62"></script>
   </body>
 </html>

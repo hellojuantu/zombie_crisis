@@ -742,7 +742,7 @@
 
         // wall collision
         let hitWall = false;
-        for (const o of this.obstacles) {
+        for (const o of nearObs(this.obstacles, b.x, b.y, b.radius + 60)) {
           if (circleRect(b.x, b.y, b.radius, o.x, o.y, o.w, o.h)) { hitWall = true; break; }
         }
         if (hitWall) {
@@ -865,7 +865,7 @@
           p.x = rx; p.y = ry;
           p.hp = p.maxHp; p.vx = 0; p.vy = 0;
           p.dead = false; p.protUntil = now + PROTECT_SECS;
-          this.transport.dispatch('p_resp', { pid: 'local', x: p.x, y: p.y, lives: p.lives, prot: true });
+          this.transport.dispatch('p_resp', { pid: 'local', x: p.x, y: p.y, lives: p.lives, maxLives: p.maxLives, hp: p.hp, prot: true });
         }, 1500);
       }
     }
@@ -1296,7 +1296,8 @@
         },
         obs: this.obstacles, features: this.features,
         pl: p ? { local: this._playerTuple(p, this.now) } : {},
-        z: {}, b: {}, i: {},
+        z: {}, b: {},
+        i: Object.fromEntries([...this.items.entries()].map(([id, it]) => [id, this._itemTuple(it)])),
         w: this.wave, wr: this.waveRemaining,
         lb: [], obj: this._objSnapshot(),
         mission: this._missionSnapshot(),
