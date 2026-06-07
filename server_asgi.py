@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from server_game.config import SERVER_DT, SNAPSHOT_DT
-from server_game.simulation import Game
+from server_game.simulation import Game, SCENE_MAIN
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -117,22 +117,24 @@ async def connect(sid, environ, auth=None):
 @sio.event
 async def disconnect(sid, reason=None):
     async with _game_lock:
+        scene_id = G._entity_scene(G.players[sid]) if sid in G.players else SCENE_MAIN
         removed = G.remove_player(sid)
         events = drain_events()
     await emit_events(events)
     if removed:
-        await sio.emit("p_leave", {"pid": sid})
+        await sio.emit("p_leave", {"pid": sid, "sceneId": scene_id})
 
 
 @sio.on("join_game")
 async def on_join(sid, data):
     await start_background_tasks()
+    old_sid = None
     async with _game_lock:
         if not G.running:
             G.reset()
             G.emit = queue_emit
 
-        idx, sx, sy = G.add_player(sid)
+        idx, sx, sy, old_sid = G.claim_single_player(sid)
         G.running = True
         init_data = G.get_init_data(sid, idx)
         player = G.players[sid]
@@ -146,13 +148,23 @@ async def on_join(sid, data):
         events = drain_events()
     await emit_events(events)
     await sio.emit("init", init_data, to=sid)
-    await sio.emit("p_join", join_data)
+    await sio.emit("p_join", join_data, to=sid)
+    if old_sid:
+        await sio.disconnect(old_sid)
 
 
 @sio.on("player_input")
 async def on_input(sid, data):
     async with _game_lock:
         G.handle_input(sid, data)
+        events = drain_events()
+    await emit_events(events)
+
+
+@sio.on("request_scene")
+async def on_request_scene(sid, data):
+    async with _game_lock:
+        G.refresh_scene(sid)
         events = drain_events()
     await emit_events(events)
 
@@ -193,7 +205,7 @@ async def on_restart(sid, data):
         G.reset(keep_players=True)
         G.emit = queue_emit
         if sid not in G.players:
-            G.add_player(sid)
+            G.claim_single_player(sid)
         G.running = True
         init_packets = [(pid, G.get_init_data(pid, p["idx"])) for pid, p in G.players.items()]
         events = drain_events()

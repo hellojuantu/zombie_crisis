@@ -18,6 +18,7 @@ export function createAudio() {
   let nextAmbientEventAt = 0;
   let enabled = true;
   let lastShot = 0;
+  let lastFog = 0;
 
   function ensure() {
     if (!enabled) return null;
@@ -354,14 +355,14 @@ export function createAudio() {
   }
 
   function fogWave(reason = 'director') {
-    alarm(reason === 'extraction' || reason === 'terminal' ? 1.25 : 1);
-    noise(0.95, 0.24, 230);
-    tone(48, 1.05, 'sawtooth', 0.15, -18);
-    noiseAt(0.09, 0.24, 0.2, 1650, 'bandpass', 0.85);
-    toneAt(420, 0.26, 0.16, 'square', 0.065, -220);
-    if (reason === 'lab') setTimeout(() => distantScream(1.35), 360);
-    if (reason === 'medbay') setTimeout(() => radioWhisper(1.3), 240);
-    if (reason === 'armory' || reason === 'generator') setTimeout(() => metalCreak(1.45), 220);
+    const c = ensure();
+    if (!c || c.currentTime - lastFog < 1.15) return;
+    lastFog = c.currentTime;
+    const intense = reason === 'extraction' || reason === 'terminal';
+    filteredNoise(0.42, intense ? 0.16 : 0.12, intense ? 180 : 240, 'bandpass', 0.55);
+    tone(intense ? 42 : 52, 0.58, 'sawtooth', intense ? 0.1 : 0.072, -16);
+    toneAt(intense ? 360 : 290, 0.08, 0.12, 'triangle', intense ? 0.04 : 0.026, -150);
+    if (reason === 'lab' || reason === 'medbay') setTimeout(() => distantScream(0.85), 280);
   }
 
   function hit() {

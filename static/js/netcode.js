@@ -26,8 +26,14 @@
     return true;
   }
 
+  function predictionSeq(inputSeq, hasUnsentInput = false) {
+    const seq = Number.isFinite(inputSeq) ? inputSeq : Number(inputSeq) || 0;
+    return Math.max(0, Math.floor(seq)) + (hasUnsentInput ? 1 : 0);
+  }
+
   return {
     inputSignature,
+    predictionSeq,
     shouldSendInput,
   };
 });

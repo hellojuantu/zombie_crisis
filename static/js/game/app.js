@@ -1,10 +1,11 @@
-import { createAudio } from './audio.js?v=45';
-import { createEffects } from './effects.js?v=45';
-import { createRenderer } from './render.js?v=45';
-import { createUI } from './ui.js?v=45';
+import { createAudio } from './audio.js?v=62';
+import { createEffects } from './effects.js?v=62';
+import { createRenderer } from './render.js?v=62';
+import { createUI } from './ui.js?v=62';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
 const { stageFailedMessage } = window.ZCMessages;
+const { sceneMatches: sceneMatchesPayload } = window.ZCSceneFilter;
 
 let playerSpeed = 315;
 let playerRadius = 17;
@@ -14,6 +15,9 @@ let fireInterval = 0.145;
 let muzzleForward = 34;
 let mapW = 3400;
 let mapH = 3400;
+let moveCollisionStep = 14;
+let dynamicAoiMain = 980;
+let dynamicAoiRoom = 520;
 let vehicleSpeedMult = 1.52;
 let weaponOrder = ['pistol', 'rifle', 'shotgun', 'smg', 'launcher'];
 let weaponTypes = {
@@ -33,8 +37,10 @@ let weaponTypes = {
 
 const BASE_INTERP_DELAY = 105;
 const SNAP_DIST = 170;
+const SELF_VISUAL_SMOOTHING = 30;
+const SELF_VISUAL_SNAP = 120;
 const MAX_SAMPLES = 10;
-const INPUT_ACTIVE_MS = 66;
+const INPUT_ACTIVE_MS = 33;
 const INPUT_IDLE_MS = 170;
 const AIM_EPS = 0.045;
 const SOCKET_OPTIONS = {
@@ -56,9 +62,9 @@ const predictor = ZCPrediction.createPredictor({
   radius: playerRadius,
   mapW,
   mapH,
-  softSnap: 34,
-  hardSnap: 190,
-  softFactor: 0.055,
+  softSnap: 48,
+  hardSnap: 220,
+  softFactor: 0.035,
 });
 const camera = ZCCamera.createCamera({
   stiffness: 18,
@@ -80,6 +86,7 @@ let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 let shooting = false;
 let dashReq = false;
+let interactReq = false;
 let reloadReq = false;
 let fireReq = false;
 let weaponReq = '';
@@ -102,12 +109,16 @@ let lastHUD = 0;
 let lastMinimap = 0;
 let camView = { x: 0, y: 0 };
 let training = { move: false, aim: false, shoot: false, objective: false };
+let scenePayloadReady = true;
+let sceneRefreshRequestedAt = 0;
+let lastReconcile = { error: 0, pending: 0 };
 
 const state = {
   scene: 'main',
   sceneName: '设施楼层',
   mw: mapW,
   mh: mapH,
+  dynamicAoi: dynamicAoiMain,
   obs: [],
   features: [],
   pl: {},
@@ -125,7 +136,9 @@ const state = {
   mission: null,
   exits: [],
   intermission: null,
+  perf: {},
 };
+let collisionObstacles = ZCPrediction.prepareObstacles(state.obs);
 
 const me = {
   x: 0,
@@ -171,6 +184,30 @@ const me = {
 };
 const visualMe = { x: 0, y: 0, ready: false };
 
+function resetVisualMe(x = me.x, y = me.y) {
+  visualMe.x = x;
+  visualMe.y = y;
+  visualMe.ready = true;
+}
+
+function updateVisualMe(dt) {
+  if (!joined || !Number.isFinite(me.x) || !Number.isFinite(me.y)) return;
+  if (!visualMe.ready) {
+    resetVisualMe();
+    return;
+  }
+  const dx = me.x - visualMe.x;
+  const dy = me.y - visualMe.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > SELF_VISUAL_SNAP || me.dead || !scenePayloadReady) {
+    resetVisualMe();
+    return;
+  }
+  const t = 1 - Math.exp(-SELF_VISUAL_SMOOTHING * Math.min(0.05, dt));
+  visualMe.x += dx * t;
+  visualMe.y += dy * t;
+}
+
 function hpMaxForLevel(level) {
   return 100 + Math.min(45, Math.max(0, level - 1) * 5);
 }
@@ -179,10 +216,26 @@ function currentWeaponMeta() {
   return weaponTypes[me.weapon] || weaponTypes.pistol || {};
 }
 
-function weaponLabelList(list) {
-  return (list && list.length ? list : ['pistol'])
-    .map((id, idx) => `${idx + 1}.${weaponTypes[id]?.name || id}`)
-    .join(' ');
+const QUIET_PICKUP_TYPES = new Set([
+  'ammo',
+  'ammo_pistol',
+  'ammo_rifle',
+  'ammo_smg',
+  'ammo_shell',
+  'ammo_explosive',
+  'parts',
+  'medkit',
+]);
+
+function shouldNotifyPickup(data) {
+  const type = data?.type || '';
+  const sceneId = data?.sceneId || state.scene || 'main';
+  const inRoom = sceneId !== 'main';
+  if (!type) return false;
+  if (inRoom && type !== 'lore') return true;
+  if (QUIET_PICKUP_TYPES.has(type) || type.startsWith('weapon_')) return false;
+  if (type === 'lore') return false;
+  return true;
 }
 
 function unlockedWeapons() {
@@ -277,10 +330,30 @@ function applyPlayer(target, next) {
   target.spread = next.spread;
 }
 
+function syncOwnPlayerRenderState() {
+  const p = state.pl[myId];
+  if (!p) return;
+  p.x = visualMe.ready ? visualMe.x : me.x;
+  p.y = visualMe.ready ? visualMe.y : me.y;
+  applyPlayer(
+    p,
+    Object.assign({}, p, me, {
+      color: p.color || myCol,
+      name: p.name || myNm,
+      maxHp: me.maxHp || hpMaxForLevel(me.level),
+      radius: me.radius || playerRadius,
+      speed: me.speed || playerSpeed,
+    }),
+  );
+}
+
 function resetState() {
   state.scene = 'main';
   state.sceneName = '设施楼层';
   state.obs = [];
+  collisionObstacles = ZCPrediction.prepareObstacles(state.obs);
+  scenePayloadReady = true;
+  sceneRefreshRequestedAt = 0;
   state.features = [];
   state.pl = {};
   state.z = {};
@@ -297,14 +370,17 @@ function resetState() {
   state.mission = null;
   state.exits = [];
   state.intermission = null;
+  state.perf = {};
   effects.clear();
 }
 
 function sceneMatches(data = {}) {
-  return !data.sceneId || data.sceneId === state.scene || data.sceneId === me.sceneId;
+  return sceneMatchesPayload(state.scene, me.sceneId, data);
 }
 
 function applyScenePayload(data = {}, clearEntities = true) {
+  scenePayloadReady = true;
+  sceneRefreshRequestedAt = 0;
   state.scene = data.scene || 'main';
   state.sceneName = data.sceneName || (state.scene === 'main' ? '设施楼层' : '设施内部');
   me.sceneId = state.scene;
@@ -315,7 +391,15 @@ function applyScenePayload(data = {}, clearEntities = true) {
   state.mh = mapH;
   predictor.config.mapW = mapW;
   predictor.config.mapH = mapH;
-  if (data.obs) state.obs = data.obs;
+  state.dynamicAoi = Number.isFinite(data.dynamicAoi)
+    ? data.dynamicAoi
+    : state.scene === 'main'
+      ? dynamicAoiMain
+      : dynamicAoiRoom;
+  if (data.obs) {
+    state.obs = data.obs;
+    collisionObstacles = ZCPrediction.prepareObstacles(state.obs);
+  }
   if (data.features) state.features = data.features;
   if ('mission' in data) state.mission = data.mission || null;
   if (data.exits) state.exits = data.exits;
@@ -332,6 +416,13 @@ function applyScenePayload(data = {}, clearEntities = true) {
     effects.clear();
     predictor.clear();
   }
+}
+
+function requestSceneRefresh() {
+  const now = performance.now();
+  if (!sock || !sock.connected || now - sceneRefreshRequestedAt < 280) return;
+  sceneRefreshRequestedAt = now;
+  sock.emit('request_scene', {});
 }
 
 function resetTraining() {
@@ -447,42 +538,8 @@ function inputDir() {
   return [dx, dy];
 }
 
-function circleRect(cx, cy, cr, rx, ry, rw, rh) {
-  const nx = Math.max(rx, Math.min(cx, rx + rw));
-  const ny = Math.max(ry, Math.min(cy, ry + rh));
-  return (cx - nx) ** 2 + (cy - ny) ** 2 < cr * cr;
-}
-
-function moveLocalOnce(x, y, radius, dx, dy) {
-  let nx = Math.max(radius, Math.min(mapW - radius, x + dx));
-  let ny = Math.max(radius, Math.min(mapH - radius, y + dy));
-  for (const o of state.obs) {
-    if (!circleRect(nx, ny, radius, o.x, o.y, o.w, o.h)) continue;
-    if (!circleRect(nx, y, radius, o.x, o.y, o.w, o.h)) ny = y;
-    else if (!circleRect(x, ny, radius, o.x, o.y, o.w, o.h)) nx = x;
-    else {
-      nx = x;
-      ny = y;
-    }
-  }
-  return [nx, ny];
-}
-
 function moveLocal(x, y, radius, dx, dy) {
-  const dist = Math.hypot(dx, dy);
-  if (dist <= 0.01) return [x, y];
-  const steps = Math.max(1, Math.ceil(dist / 14));
-  const stepX = dx / steps;
-  const stepY = dy / steps;
-  let cx = x;
-  let cy = y;
-  for (let i = 0; i < steps; i += 1) {
-    const [nx, ny] = moveLocalOnce(cx, cy, radius, stepX, stepY);
-    if (Math.abs(nx - cx) < 0.001 && Math.abs(ny - cy) < 0.001) break;
-    cx = nx;
-    cy = ny;
-  }
-  return [cx, cy];
+  return ZCPrediction.moveWithCollision(x, y, radius, dx, dy, mapW, mapH, collisionObstacles, moveCollisionStep);
 }
 
 function snapCamera() {
@@ -497,24 +554,6 @@ function followCamera(dt) {
   camView = camera.view(size.dpr);
 }
 
-function updateVisualMe(dt) {
-  if (!visualMe.ready) {
-    visualMe.x = me.x;
-    visualMe.y = me.y;
-    visualMe.ready = true;
-    return;
-  }
-  const err = Math.hypot(me.x - visualMe.x, me.y - visualMe.y);
-  if (err > 210) {
-    visualMe.x = me.x;
-    visualMe.y = me.y;
-    return;
-  }
-  const alpha = 1 - Math.exp(-18 * Math.min(dt, 0.05));
-  visualMe.x += (me.x - visualMe.x) * alpha;
-  visualMe.y += (me.y - visualMe.y) * alpha;
-}
-
 function localDash(nowSeconds) {
   if (!dashReq || me.dead || nowSeconds < localDashReady) return;
   let [dx, dy] = inputDir();
@@ -522,13 +561,11 @@ function localDash(nowSeconds) {
     dx = Math.cos(me.aim);
     dy = Math.sin(me.aim);
   }
-  const sx = me.x;
-  const sy = me.y;
-  const [nx, ny] = moveLocal(me.x, me.y, me.radius || playerRadius, dx * dashDist, dy * dashDist);
-  me.x = nx;
-  me.y = ny;
-  me.vx = dx * (me.speed || playerSpeed) * 0.22;
-  me.vy = dy * (me.speed || playerSpeed) * 0.22;
+  const origin = visiblePlayerCenter();
+  const sx = origin.x;
+  const sy = origin.y;
+  const nx = sx + dx * dashDist;
+  const ny = sy + dy * dashDist;
   localDashReady = nowSeconds + dashCd;
   effects.tracer(sx, sy, nx, ny, myCol);
   effects.ring(nx, ny, 34, myCol, 0.18, 2);
@@ -660,6 +697,7 @@ function sendPing(ts) {
 function sendInput(force = false) {
   if (!sock || !joined) return;
   const paused = inventoryOpen || Boolean(state.intermission?.active);
+  const locallyMoving = Math.hypot(me.vx || 0, me.vy || 0) > 2;
   const ik = {
     up: !paused && (keys.w || keys.arrowup),
     down: !paused && (keys.s || keys.arrowdown),
@@ -668,12 +706,25 @@ function sendInput(force = false) {
   };
   const now = performance.now();
   const dash = paused ? false : dashReq;
+  const interact = paused ? false : interactReq;
   const reload = paused ? false : reloadReq;
   const fire = paused ? false : fireReq;
   const weapon = paused ? '' : weaponReq;
   const aimTarget = worldAimTarget();
-  const active = paused || ik.up || ik.down || ik.left || ik.right || shooting || dash || reload || fire || weapon;
-  const sig = `${ZCNetcode.inputSignature(ik, paused ? false : shooting, dash, me.aim, AIM_EPS)}|${reload ? 1 : 0}|${fire ? 1 : 0}|${weapon}|${paused ? 1 : 0}`;
+  const active =
+    paused ||
+    locallyMoving ||
+    ik.up ||
+    ik.down ||
+    ik.left ||
+    ik.right ||
+    shooting ||
+    dash ||
+    interact ||
+    reload ||
+    fire ||
+    weapon;
+  const sig = `${ZCNetcode.inputSignature(ik, paused ? false : shooting, dash, me.aim, AIM_EPS)}|${interact ? 1 : 0}|${reload ? 1 : 0}|${fire ? 1 : 0}|${weapon}|${paused ? 1 : 0}`;
   const changed = sig !== lastInputSig;
   if (
     !ZCNetcode.shouldSendInput({
@@ -699,6 +750,7 @@ function sendInput(force = false) {
     aim_y: aimTarget.y,
     shooting: paused ? false : shooting,
     dash,
+    interact,
     reload,
     fire,
     weapon,
@@ -706,6 +758,7 @@ function sendInput(force = false) {
   });
   inputDirty = false;
   if (dash) dashReq = false;
+  if (interact) interactReq = false;
   if (reload) reloadReq = false;
   if (fire) fireReq = false;
   if (weapon) weaponReq = '';
@@ -714,7 +767,7 @@ function sendInput(force = false) {
 function createSocket() {
   if (typeof window.io !== 'function') {
     ui.setJoinLoading(false);
-    ui.notify('联机脚本加载失败', '#ff6666');
+    ui.notify('本地运行脚本加载失败', '#ff6666');
     return null;
   }
   return window.io(SOCKET_OPTIONS);
@@ -773,10 +826,14 @@ function setupSocket() {
       fireInterval = data.cfg.fireInterval || fireInterval;
       muzzleForward = data.cfg.muzzleForward || muzzleForward;
       vehicleSpeedMult = data.cfg.vehicleSpeedMult || vehicleSpeedMult;
+      dynamicAoiMain = data.cfg.dynamicAoiMain || dynamicAoiMain;
+      dynamicAoiRoom = data.cfg.dynamicAoiRoom || dynamicAoiRoom;
       weaponOrder = data.cfg.weaponOrder || weaponOrder;
       weaponTypes = data.cfg.weaponTypes || weaponTypes;
       predictor.config.accel = data.cfg.moveAccel || predictor.config.accel;
       predictor.config.decel = data.cfg.moveDecel || predictor.config.decel;
+      predictor.config.collisionStep = data.cfg.moveCollisionStep || predictor.config.collisionStep;
+      moveCollisionStep = data.cfg.moveCollisionStep || moveCollisionStep;
     }
     predictor.config.mapW = mapW;
     predictor.config.mapH = mapH;
@@ -808,15 +865,14 @@ function setupSocket() {
     me.sceneId = p.sceneId || state.scene;
     me.sceneName = p.sceneName || state.sceneName;
     me.maxHp = p.maxHp || hpMaxForLevel(me.level);
-    visualMe.x = me.x;
-    visualMe.y = me.y;
-    visualMe.ready = true;
+    resetVisualMe();
     joined = true;
     joining = false;
     inputSeq = 0;
     inputDirty = true;
     lastInputSig = '';
     dashReq = false;
+    interactReq = false;
     reloadReq = false;
     fireReq = false;
     weaponReq = '';
@@ -847,13 +903,20 @@ function setupSocket() {
       state.mh = mapH;
       predictor.config.mapW = mapW;
       predictor.config.mapH = mapH;
+      scenePayloadReady = false;
+      collisionObstacles = ZCPrediction.prepareObstacles([]);
+      predictor.clear();
+      requestSceneRefresh();
     }
+    if (Number.isFinite(data.dynamicAoi)) state.dynamicAoi = data.dynamicAoi;
+    if (data.perf) state.perf = data.perf;
     for (const pid of Object.keys(data.p || {})) {
       const next = mkP(pid, data.p[pid]);
       if (!state.pl[pid]) state.pl[pid] = seedSamples(next, syncT);
       const p = state.pl[pid];
       if (pid === myId) {
         Object.assign(me, {
+          aim: next.aim,
           hp: next.hp,
           maxHp: next.maxHp || hpMaxForLevel(next.level),
           score: next.score,
@@ -893,10 +956,8 @@ function setupSocket() {
         });
         predictor.config.radius = me.radius;
         predictor.config.speed = me.speed;
-        predictor.reconcile(me, next, next.ack, state.obs);
-        p.x = me.x;
-        p.y = me.y;
-        applyPlayer(p, next);
+        lastReconcile = predictor.reconcile(me, next, next.ack, collisionObstacles);
+        syncOwnPlayerRenderState();
       } else {
         pushSample(p, next.x, next.y, syncT);
         applyPlayer(p, next);
@@ -977,9 +1038,7 @@ function setupSocket() {
     applyScenePayload(data, true);
     me.x = Number.isFinite(data.x) ? data.x : me.x;
     me.y = Number.isFinite(data.y) ? data.y : me.y;
-    visualMe.x = me.x;
-    visualMe.y = me.y;
-    visualMe.ready = true;
+    resetVisualMe();
     if (!state.pl[myId]) state.pl[myId] = seedSamples(Object.assign({ id: myId }, me));
     state.pl[myId].x = me.x;
     state.pl[myId].y = me.y;
@@ -1108,8 +1167,8 @@ function setupSocket() {
       '雾袭';
     const sourceText = data.sourceCount ? ` · 感染源 ${data.sourceCount}` : '';
     ui.notify(`${reasonText}：${data.count || 0} 只感染体靠近${sourceText}`, data.col || '#d6eceb');
-    effects.ring(data.x, data.y, 160, data.col || '#d6eceb', 0.78, 5);
-    effects.particlesAt(data.x, data.y, data.col || '#d6eceb', 44, 230, 0.7, 4.2);
+    effects.ring(data.x, data.y, 132, data.col || '#d6eceb', 0.48, 4);
+    effects.particlesAt(data.x, data.y, data.col || '#d6eceb', 16, 150, 0.42, 3.4);
     audio.fogWave(data.reason || 'director');
   });
   sock.on('z_leap', (data) => {
@@ -1123,12 +1182,6 @@ function setupSocket() {
     effects.ring(data.x, data.y, data.r || 260, data.col || '#d88cff', 0.38, 4);
     effects.particlesAt(data.x, data.y, data.col || '#d88cff', Math.min(28, 8 + (data.buffed || 0)), 140, 0.32, 2.6);
     audio.screamer();
-  });
-  sock.on('z_spit', (data) => {
-    if (!sceneMatches(data)) return;
-    effects.tracer(data.x, data.y, data.tx, data.ty, data.col || '#7fdc71');
-    effects.ring(data.tx, data.ty, 34, data.col || '#7fdc71', 0.24, 3);
-    audio.hit();
   });
   sock.on('boss_slam', (data) => {
     if (!sceneMatches(data)) return;
@@ -1183,6 +1236,7 @@ function setupSocket() {
     audio.reward();
   });
   sock.on('task_update', (data) => {
+    if (!sceneMatches(data)) return;
     state.obj = Object.assign({}, state.obj || {}, { task: data.task || {} });
     markTraining('objective');
     ui.notify(`取得 ${data.name} x${data.count}`, data.col || '#dce7f1');
@@ -1216,7 +1270,7 @@ function setupSocket() {
       me.vehicle = Boolean(data.vehicle);
       const suffix = data.amount && data.amount > 1 ? ` +${data.amount}` : '';
       markTraining('objective');
-      ui.notify(`获得 ${data.name}${suffix}`, data.col || '#fff');
+      if (shouldNotifyPickup(data)) ui.notify(`获得 ${data.name}${suffix}`, data.col || '#fff');
       audio.pickup();
     }
   });
@@ -1277,7 +1331,6 @@ function setupSocket() {
   sock.on('weapon_unlock', (data) => {
     if (data.pid !== myId) return;
     applyWeaponEvent(data);
-    ui.notify(`解锁 ${data.weaponName || '新武器'} · ${weaponLabelList(me.weapons)}`, data.col || '#8fd0ff');
     effects.ring(data.x, data.y, 72, data.col || '#8fd0ff', 0.48, 4);
     audio.reward();
   });
@@ -1285,7 +1338,6 @@ function setupSocket() {
     if (data.pid !== myId) return;
     applyWeaponEvent(data);
     localShotReady = 0;
-    ui.notify(`切换 ${me.weaponName}`, data.col || '#dce7f1');
   });
   sock.on('vehicle_start', (data) => {
     if (data.pid !== myId) return;
@@ -1309,6 +1361,7 @@ function setupSocket() {
   });
   sock.on('facility_pulse', (data) => {
     if (data.pid !== myId) return;
+    if (data.noticeKey === 'enter_prompt') return;
     ui.notify(data.text || '设施响应', data.col || '#aee6ff');
     effects.ring(data.x, data.y, 54, data.col || '#aee6ff', 0.34, 3);
     audio.facility(data.facility || '');
@@ -1323,11 +1376,12 @@ function setupSocket() {
   });
   sock.on('facility_used', (data) => {
     if (!sceneMatches(data)) return;
-    if (data.pid === myId) ui.notify(data.text || '设施已使用', data.col || '#aee6ff');
+    if (data.pid === myId && !data.quiet) ui.notify(data.text || '设施已使用', data.col || '#aee6ff');
     effects.ring(data.x, data.y, 76, data.col || '#aee6ff', 0.46, 4);
     audio.facility(data.facility || '');
   });
   sock.on('lore_found', (data) => {
+    if (!sceneMatches(data)) return;
     if (data.pid !== myId) return;
     me.lore = data.count || me.lore;
     ui.notify(data.text || `档案碎片 ${me.lore}`, data.col || '#aee6ff');
@@ -1346,6 +1400,7 @@ function setupSocket() {
     if (data.pid === myId) ui.notify(`清场 ${data.kills}`, '#ffcc66');
   });
   sock.on('mission_revealed', (data) => {
+    if (!sceneMatches(data)) return;
     state.exits = state.exits.map((exit) =>
       exit.id === data.id ? Object.assign({}, exit, data, { visible: true }) : exit,
     );
@@ -1356,6 +1411,7 @@ function setupSocket() {
     effects.particlesAt(data.x, data.y, data.col || '#ff4d5f', 22, 150, 0.42, 3.4);
   });
   sock.on('exit_ready', (data) => {
+    if (!sceneMatches(data)) return;
     state.exits = state.exits.map((exit) =>
       exit.id === data.id ? Object.assign({}, exit, data, { visible: true, ready: true }) : exit,
     );
@@ -1366,6 +1422,7 @@ function setupSocket() {
     effects.particlesAt(data.x, data.y, '#48f0a0', 26, 180, 0.5, 3.6);
   });
   sock.on('mission_complete', (data) => {
+    if (!sceneMatches(data)) return;
     if (state.mission) {
       state.mission.done = true;
       state.mission.charge = 1;
@@ -1386,6 +1443,7 @@ function setupSocket() {
     keys = {};
     shooting = false;
     dashReq = false;
+    interactReq = false;
     reloadReq = false;
     fireReq = false;
     weaponReq = '';
@@ -1398,12 +1456,13 @@ function setupSocket() {
   sock.on('p_dash', (data) => {
     if (!sceneMatches(data)) return;
     if (data.pid === myId) {
-      if (Math.hypot(data.x - me.x, data.y - me.y) > 82) {
-        me.x = data.x;
-        me.y = data.y;
-        visualMe.x = data.x;
-        visualMe.y = data.y;
-      }
+      me.x = data.x;
+      me.y = data.y;
+      me.vx = 0;
+      me.vy = 0;
+      predictor.clear();
+      resetVisualMe(data.x, data.y);
+      syncOwnPlayerRenderState();
     } else if (state.pl[data.pid]) {
       snapObject(state.pl[data.pid], data.x, data.y);
     }
@@ -1420,6 +1479,7 @@ function setupSocket() {
     }
   });
   sock.on('p_die', (data) => {
+    if (!sceneMatches(data)) return;
     if (data.pid === myId) {
       me.dead = true;
       me.lives = Number.isFinite(data.lives) ? data.lives : me.lives;
@@ -1432,6 +1492,7 @@ function setupSocket() {
     effects.particlesAt(data.x, data.y, '#ff5b61', 26, 150, 0.45, 4);
   });
   sock.on('p_resp', (data) => {
+    if (data.pid !== myId && !sceneMatches(data)) return;
     if (data.pid === myId) {
       me.x = data.x;
       me.y = data.y;
@@ -1439,9 +1500,7 @@ function setupSocket() {
       me.lives = Number.isFinite(data.lives) ? data.lives : me.lives;
       me.maxLives = Number.isFinite(data.maxLives) ? data.maxLives : me.maxLives;
       me.dead = false;
-      visualMe.x = data.x;
-      visualMe.y = data.y;
-      visualMe.ready = true;
+      resetVisualMe(data.x, data.y);
       snapCamera();
     }
     if (state.pl[data.pid]) {
@@ -1454,6 +1513,7 @@ function setupSocket() {
     effects.ring(data.x, data.y, 54, '#ffffff', 0.38, 3);
   });
   sock.on('level_up', (data) => {
+    if (!sceneMatches(data)) return;
     if (data.pid === myId) {
       me.level = data.level;
       me.maxHp = hpMaxForLevel(data.level);
@@ -1483,6 +1543,7 @@ function setupSocket() {
     if (data.routeReward?.routeHook) setTimeout(() => ui.notify(data.routeReward.routeHook, '#aee6ff'), 760);
   });
   sock.on('wave_clear', (data) => {
+    if (!sceneMatches(data)) return;
     ui.notify(`第 ${data.wave} 关撤离`, '#48f0a0');
     audio.extract();
   });
@@ -1588,6 +1649,7 @@ function clearInput() {
   keys = {};
   shooting = false;
   dashReq = false;
+  interactReq = false;
   reloadReq = false;
   fireReq = false;
   weaponReq = '';
@@ -1601,6 +1663,7 @@ function setInventoryOpen(open) {
   keys = {};
   shooting = false;
   dashReq = false;
+  interactReq = false;
   reloadReq = false;
   fireReq = false;
   weaponReq = '';
@@ -1609,6 +1672,25 @@ function setInventoryOpen(open) {
   inputDirty = true;
   ui.setInventoryOpen(open);
   sendInput(true);
+}
+
+function debugSnapshot() {
+  return {
+    scene: state.scene,
+    scenePayloadReady,
+    inputSeq,
+    pending: predictor.pending.length,
+    reconcile: Object.assign({}, lastReconcile),
+    perf: Object.assign({}, state.perf || {}),
+    x: Math.round(me.x * 10) / 10,
+    y: Math.round(me.y * 10) / 10,
+    vx: Math.round((me.vx || 0) * 10) / 10,
+    vy: Math.round((me.vy || 0) * 10) / 10,
+  };
+}
+
+function publishDebugSnapshot() {
+  document.documentElement.dataset.zcDebug = JSON.stringify(debugSnapshot());
 }
 
 ui.bindActions(joinGame, restartGame, restartStage);
@@ -1644,6 +1726,7 @@ window.addEventListener('keydown', (event) => {
       'r',
       'q',
       'e',
+      'f',
       'b',
       'escape',
       '1',
@@ -1670,6 +1753,13 @@ window.addEventListener('keydown', (event) => {
   }
   if ((key === 'q' || key === 'e') && !keys[key]) {
     requestWeaponStep(key === 'q' ? -1 : 1);
+    keys[key] = true;
+    return;
+  }
+  if (key === 'f' && !keys[key]) {
+    interactReq = true;
+    inputDirty = true;
+    sendInput(true);
     keys[key] = true;
     return;
   }
@@ -1794,11 +1884,12 @@ function loop(ts) {
 
   updateAim();
   const inIntermission = Boolean(state.intermission?.active);
-  if (joined && !me.dead && !inventoryOpen && !inIntermission) {
+  if (joined) sendInput(dashReq || interactReq || fireReq || inputDirty);
+  if (joined && !me.dead && !inventoryOpen && !inIntermission && scenePayloadReady) {
     if (me.vehicle && me.vehicleCd > 0) me.vehicleCd = Math.max(0, me.vehicleCd - dt);
     localDash(ts / 1000);
     localShotFx(ts / 1000);
-    const seq = inputSeq + (dashReq || inputDirty ? 1 : 0);
+    const seq = ZCNetcode.predictionSeq(inputSeq, inputDirty);
     predictor.config.speed = me.speed || playerSpeed;
     predictor.config.radius = me.radius || playerRadius;
     predictor.predict(
@@ -1814,48 +1905,14 @@ function loop(ts) {
       },
       dt,
       seq,
-      state.obs,
+      collisionObstacles,
     );
-    if (state.pl[myId]) {
-      state.pl[myId].x = me.x;
-      state.pl[myId].y = me.y;
-      state.pl[myId].aim = me.aim;
-      state.pl[myId].hp = me.hp;
-      state.pl[myId].score = me.score;
-      state.pl[myId].dead = me.dead;
-      state.pl[myId].rapid = me.rapid;
-      state.pl[myId].spread = me.spread;
-      state.pl[myId].prot = me.prot;
-      state.pl[myId].level = me.level;
-      state.pl[myId].combo = me.combo;
-      state.pl[myId].kills = me.kills;
-      state.pl[myId].ammo = me.ammo;
-      state.pl[myId].magSize = me.magSize;
-      state.pl[myId].currentReserve = me.currentReserve;
-      state.pl[myId].ammoPools = me.ammoPools;
-      state.pl[myId].ammoType = me.ammoType;
-      state.pl[myId].ammoTypeName = me.ammoTypeName;
-      state.pl[myId].lives = me.lives;
-      state.pl[myId].maxLives = me.maxLives;
-      state.pl[myId].materials = me.materials;
-      state.pl[myId].lore = me.lore;
-      state.pl[myId].weaponLevel = me.weaponLevel;
-      state.pl[myId].weapon = me.weapon;
-      state.pl[myId].weaponName = me.weaponName;
-      state.pl[myId].weapons = me.weapons;
-      state.pl[myId].vehicle = me.vehicle;
-      state.pl[myId].vehicleCd = me.vehicleCd;
-      state.pl[myId].facility = me.facility;
-      state.pl[myId].facilityStatus = me.facilityStatus;
-      state.pl[myId].sceneId = me.sceneId;
-      state.pl[myId].sceneName = me.sceneName;
-      state.pl[myId].reloadCd = me.reloadCd;
-      state.pl[myId].radius = me.radius;
-      state.pl[myId].speed = me.speed;
-    }
   }
 
-  if (joined) updateVisualMe(dt);
+  if (joined) {
+    updateVisualMe(dt);
+    syncOwnPlayerRenderState();
+  }
   ZCInterpolation.interpolateEntities(state.pl, state.z, myId, ts, interpDelay);
   advanceBullets(dt);
   effects.update(dt);
@@ -1863,7 +1920,7 @@ function loop(ts) {
     followCamera(dt);
     updateAim();
   }
-  sendInput(dashReq || fireReq || inputDirty);
+  sendInput(false);
   sendPing(ts);
   audio.update(nearbyDanger());
 
@@ -1872,6 +1929,7 @@ function loop(ts) {
   if (drawMinimap) lastMinimap = ts;
   if (joined && ts - lastHUD > 100) {
     lastHUD = ts;
+    publishDebugSnapshot();
     ui.updateHUD({
       me,
       state,
@@ -1885,3 +1943,5 @@ function loop(ts) {
 }
 
 requestAnimationFrame(loop);
+
+window.__zcDebug = debugSnapshot;

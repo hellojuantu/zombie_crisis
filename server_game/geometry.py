@@ -81,6 +81,7 @@ def normalize_input(data):
         "shooting": bool(data.get("shooting")),
         "fire": bool(data.get("fire")),
         "dash": bool(data.get("dash")),
+        "interact": bool(data.get("interact")),
         "reload": bool(data.get("reload")),
         "paused": bool(data.get("paused")),
         "weapon": weapon,

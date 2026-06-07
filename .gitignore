@@ -18,3 +18,4 @@ yarn-error.log*
 *.sqlite
 *.db
 
+.idea/

@@ -331,7 +331,7 @@
         box-shadow:
           0 28px 90px rgba(0, 0, 0, 0.72),
           inset 0 1px 0 rgba(255, 255, 255, 0.08);
-        padding: 22px;
+        padding: 18px;
         display: flex;
         flex-direction: column;
       }
@@ -344,7 +344,7 @@
         padding-bottom: 14px;
       }
       .inventory-head h2 {
-        font-size: 26px;
+        font-size: 22px;
         color: #edf7ff;
       }
       .inventory-head p {
@@ -384,10 +384,10 @@
         border: 1px solid rgba(255, 255, 255, 0.1);
         background: rgba(255, 255, 255, 0.035);
         border-radius: 7px;
-        padding: 14px;
+        padding: 12px;
       }
       .inv-section h3 {
-        font-size: 15px;
+        font-size: 14px;
         color: #ffb1bd;
         margin-bottom: 10px;
       }
@@ -436,8 +436,34 @@
       .inv-stat b {
         display: block;
         color: #edf2f7;
-        font-size: 22px;
+        font-size: 18px;
         margin-top: 4px;
+      }
+      .inv-ammo-list {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .inv-ammo-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(0, 0, 0, 0.16);
+        border-radius: 6px;
+        padding: 7px 9px;
+        color: #aeb7c2;
+        font-size: 12px;
+      }
+      .inv-ammo-row.active {
+        border-color: rgba(72, 240, 160, 0.42);
+        color: #dfffee;
+        background: rgba(72, 240, 160, 0.08);
+      }
+      .inv-ammo-row b {
+        color: #edf2f7;
+        font-size: 13px;
       }
       .inv-exits {
         display: grid;
@@ -731,33 +757,33 @@
         position: fixed;
         top: 38%;
         left: 50%;
+        width: min(620px, calc(100vw - 24px));
+        height: 172px;
         transform: translate(-50%, -50%);
         z-index: 120;
         text-align: center;
         pointer-events: none;
+        contain: layout style;
       }
       .nt {
+        position: absolute;
+        top: calc(var(--slot, 0) * 38px);
+        left: 0;
+        right: 0;
         font-size: 22px;
         font-weight: 800;
         padding: 6px 14px;
         margin: 4px;
+        opacity: 0;
+        transition: opacity 0.12s linear;
+        transform: translateZ(0);
+        will-change: opacity;
         text-shadow:
           1px 1px 4px rgba(0, 0, 0, 0.9),
           0 0 18px rgba(255, 77, 95, 0.28);
-        animation: nf 1.8s forwards;
       }
-      @keyframes nf {
-        0% {
-          opacity: 1;
-          transform: translateY(0) scale(1);
-        }
-        70% {
-          opacity: 1;
-        }
-        100% {
-          opacity: 0;
-          transform: translateY(-30px) scale(0.94);
-        }
+      .nt.show {
+        opacity: 1;
       }
       #join-screen {
         position: fixed;
@@ -926,7 +952,7 @@
     <div id="join-screen">
       <h1>僵尸危机</h1>
       <h2>地下设施断电 · 撤离终端失联 · 有人在无线电里倒数</h2>
-      <button class="btn" id="joinBtn">加入游戏</button>
+      <button class="btn" id="joinBtn">开始行动</button>
       <button class="btn sec" id="restartBtn">重新开始</button>
       <div class="ci">
         <span>WASD</span> 移动 · <span>鼠标</span> 瞄准 · <span>左键</span> 攻击 · <span>右键/QE</span> 换枪 ·
@@ -981,7 +1007,7 @@
       <div id="storyline" class="story">耳机里只剩呼吸声。</div>
     </div>
     <div id="scoreboard" style="display: none">
-      <div style="font-weight: 800; margin-bottom: 5px">排行榜</div>
+      <div style="font-weight: 800; margin-bottom: 5px">行动记录</div>
       <div id="slist"></div>
     </div>
     <div id="training-panel"><div class="steps" id="trainingSteps"></div></div>
@@ -1014,8 +1040,8 @@
                 <div class="inv-stat">门禁卡 <b id="invKeycard">0</b></div>
                 <div class="inv-stat">零件 <b id="invParts">0</b></div>
                 <div class="inv-stat">档案 <b id="invLore">0</b></div>
-                <div class="inv-stat">弹药 <b id="invReserve">0</b></div>
               </div>
+              <div class="inv-ammo-list" id="inventoryAmmoList"></div>
             </section>
             <section class="inv-section">
               <h3>撤离条件</h3>
@@ -1071,14 +1097,15 @@
     <canvas id="gameCanvas"></canvas>
     <canvas id="minimap" width="150" height="150"></canvas>
 
-    <script src="/static/vendor/socket.io.min.js?v=45"></script>
-    <script src="/static/js/protocol.js?v=45"></script>
-    <script src="/static/js/prediction.js?v=45"></script>
-    <script src="/static/js/interpolation.js?v=45"></script>
-    <script src="/static/js/camera.js?v=45"></script>
-    <script src="/static/js/timing.js?v=45"></script>
-    <script src="/static/js/netcode.js?v=45"></script>
-    <script src="/static/js/game/messages.js?v=45"></script>
-    <script type="module" src="/static/js/game/app.js?v=45"></script>
+    <script src="/static/vendor/socket.io.min.js?v=58"></script>
+    <script src="/static/js/protocol.js?v=62"></script>
+    <script src="/static/js/prediction.js?v=62"></script>
+    <script src="/static/js/interpolation.js?v=62"></script>
+    <script src="/static/js/camera.js?v=62"></script>
+    <script src="/static/js/timing.js?v=62"></script>
+    <script src="/static/js/netcode.js?v=62"></script>
+    <script src="/static/js/game/messages.js?v=62"></script>
+    <script src="/static/js/game/scene_filter.js?v=62"></script>
+    <script type="module" src="/static/js/game/app.js?v=62"></script>
   </body>
 </html>

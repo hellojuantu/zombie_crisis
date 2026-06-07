@@ -36,9 +36,45 @@ assert.strictEqual(Number(player.x.toFixed(1)), 66);
 const blocked = prediction.moveWithCollision(100, 100, 16, 40, 0, 3000, 3000, [{ x: 120, y: 80, w: 40, h: 40 }]);
 assert.deepStrictEqual(blocked, [100, 100]);
 
+const indexedObstacles = prediction.prepareObstacles([
+  { x: 120, y: 80, w: 40, h: 40 },
+  { x: 1000, y: 1000, w: 60, h: 60 },
+]);
+assert.strictEqual(prediction.nearObstacles(indexedObstacles, 100, 100, 90).length, 1);
+const indexedBlocked = prediction.moveWithCollision(100, 100, 16, 40, 0, 3000, 3000, indexedObstacles);
+assert.deepStrictEqual(indexedBlocked, [100, 100]);
+
 const tunnelBlocked = prediction.moveWithCollision(100, 100, 16, 150, 0, 3000, 3000, [{ x: 170, y: 80, w: 42, h: 40 }]);
 assert.ok(tunnelBlocked[0] < 170 - 16 + 1);
 assert.ok(tunnelBlocked[0] > 130);
+
+const resolved = prediction.moveWithCollision(130, 120, 16, 0, 0, 3000, 3000, [{ x: 100, y: 80, w: 80, h: 80 }]);
+assert.strictEqual(prediction.circleRect(resolved[0], resolved[1], 16, 100, 80, 80, 80), false);
+
+const cornerResolved = prediction.moveWithCollision(118, 118, 16, 0, 0, 3000, 3000, [
+  { x: 100, y: 0, w: 62, h: 164 },
+  { x: 0, y: 100, w: 164, h: 62 },
+]);
+assert.strictEqual(
+  [
+    prediction.circleRect(cornerResolved[0], cornerResolved[1], 16, 100, 0, 62, 164),
+    prediction.circleRect(cornerResolved[0], cornerResolved[1], 16, 0, 100, 164, 62),
+  ].some(Boolean),
+  false,
+);
+
+const coarseBlocked = prediction.moveWithCollision(
+  100,
+  100,
+  16,
+  150,
+  0,
+  3000,
+  3000,
+  [{ x: 170, y: 80, w: 42, h: 40 }],
+  10,
+);
+assert.ok(coarseBlocked[0] < 170 - 16 + 1);
 
 const softPlayer = { x: 100, y: 100, vx: 0, vy: 0 };
 const softPredictor = prediction.createPredictor({
@@ -48,7 +84,22 @@ const softPredictor = prediction.createPredictor({
 });
 const softResult = softPredictor.reconcile(softPlayer, { x: 120, y: 100, vx: 50, vy: 0 }, 0, []);
 assert.strictEqual(softResult.error, 20);
-assert.strictEqual(Number(softPlayer.x.toFixed(1)), 101);
-assert.strictEqual(Number(softPlayer.vx.toFixed(1)), 10);
+assert.strictEqual(softResult.dx, 20);
+assert.strictEqual(softResult.dy, 0);
+assert.strictEqual(softResult.mode, 'soft');
+assert.strictEqual(Number(softPlayer.x.toFixed(1)), 120);
+assert.strictEqual(Number(softPlayer.vx.toFixed(1)), 50);
+
+const immediatePlayer = { x: 100, y: 100, vx: 0, vy: 0 };
+const immediatePredictor = prediction.createPredictor({
+  speed: 360,
+  radius: 16,
+  trackPending: false,
+});
+immediatePredictor.predict(immediatePlayer, { keys: { right: true } }, 1 / 30, 1, []);
+immediatePredictor.predict(immediatePlayer, { keys: { right: true } }, 1 / 30, 1, []);
+assert.strictEqual(immediatePredictor.pending.length, 0);
+immediatePredictor.reconcile(immediatePlayer, { x: 105, y: 100, vx: 120, vy: 0 }, 1, []);
+assert.ok(immediatePlayer.x > 100);
 
 console.log('prediction tests ok');

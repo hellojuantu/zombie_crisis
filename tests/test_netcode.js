@@ -15,5 +15,10 @@ assert.strictEqual(
 assert.strictEqual(netcode.shouldSendInput({ now: 30, lastInputAt: 0, active: true, changed: true }), false);
 assert.strictEqual(netcode.shouldSendInput({ now: 70, lastInputAt: 0, active: true, changed: false }), true);
 assert.strictEqual(netcode.shouldSendInput({ now: 200, lastInputAt: 0, active: false, changed: false }), false);
+assert.strictEqual(netcode.predictionSeq(0), 0);
+assert.strictEqual(netcode.predictionSeq(12), 12);
+assert.strictEqual(netcode.predictionSeq('7'), 7);
+assert.strictEqual(netcode.predictionSeq(undefined), 0);
+assert.strictEqual(netcode.predictionSeq(12, true), 13);
 
 console.log('netcode tests ok');

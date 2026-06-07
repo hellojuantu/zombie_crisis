@@ -16,10 +16,124 @@
     return (cx - nx) ** 2 + (cy - ny) ** 2 < cr * cr;
   }
 
+  function prepareObstacles(obstacles, cellSize = 180) {
+    const list = Array.isArray(obstacles) ? obstacles : obstacles?.list || [];
+    const grid = new Map();
+    for (const obstacle of list) {
+      const minX = Math.floor(obstacle.x / cellSize);
+      const maxX = Math.floor((obstacle.x + obstacle.w) / cellSize);
+      const minY = Math.floor(obstacle.y / cellSize);
+      const maxY = Math.floor((obstacle.y + obstacle.h) / cellSize);
+      for (let gx = minX; gx <= maxX; gx += 1) {
+        for (let gy = minY; gy <= maxY; gy += 1) {
+          const key = `${gx},${gy}`;
+          const bucket = grid.get(key);
+          if (bucket) bucket.push(obstacle);
+          else grid.set(key, [obstacle]);
+        }
+      }
+    }
+    return { list, grid, cellSize };
+  }
+
+  function nearObstacles(obstacles, x, y, radius = 80) {
+    if (!obstacles) return [];
+    if (Array.isArray(obstacles)) return obstacles;
+    const cellSize = obstacles.cellSize || 180;
+    const minX = Math.floor((x - radius) / cellSize);
+    const maxX = Math.floor((x + radius) / cellSize);
+    const minY = Math.floor((y - radius) / cellSize);
+    const maxY = Math.floor((y + radius) / cellSize);
+    const seen = new Set();
+    const result = [];
+    for (let gx = minX; gx <= maxX; gx += 1) {
+      for (let gy = minY; gy <= maxY; gy += 1) {
+        const bucket = obstacles.grid?.get(`${gx},${gy}`) || [];
+        for (const obstacle of bucket) {
+          if (seen.has(obstacle)) continue;
+          seen.add(obstacle);
+          result.push(obstacle);
+        }
+      }
+    }
+    return result;
+  }
+
+  function resolveOverlap(x, y, radius, mapW, mapH, obstacles) {
+    let cx = Math.max(radius, Math.min(mapW - radius, x));
+    let cy = Math.max(radius, Math.min(mapH - radius, y));
+    for (let pass = 0; pass < 3; pass += 1) {
+      let moved = false;
+      for (const o of nearObstacles(obstacles, cx, cy, radius + 90)) {
+        const nearestX = Math.max(o.x, Math.min(cx, o.x + o.w));
+        const nearestY = Math.max(o.y, Math.min(cy, o.y + o.h));
+        const dx = cx - nearestX;
+        const dy = cy - nearestY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= radius * radius) continue;
+        if (distSq > 0.0001) {
+          const dist = Math.sqrt(distSq);
+          const push = radius - dist + 0.35;
+          cx += (dx / dist) * push;
+          cy += (dy / dist) * push;
+        } else {
+          const choices = [
+            [Math.abs(cx - o.x), o.x - radius - 0.35, cy],
+            [Math.abs(o.x + o.w - cx), o.x + o.w + radius + 0.35, cy],
+            [Math.abs(cy - o.y), cx, o.y - radius - 0.35],
+            [Math.abs(o.y + o.h - cy), cx, o.y + o.h + radius + 0.35],
+          ].sort((a, b) => a[0] - b[0]);
+          cx = choices[0][1];
+          cy = choices[0][2];
+        }
+        cx = Math.max(radius, Math.min(mapW - radius, cx));
+        cy = Math.max(radius, Math.min(mapH - radius, cy));
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    let nearby = nearObstacles(obstacles, cx, cy, radius + 120);
+    if (nearby.some((o) => circleRect(cx, cy, radius, o.x, o.y, o.w, o.h))) {
+      const candidates = [];
+      for (const o of nearby) {
+        const safeLeft = o.x - radius - 0.35;
+        const safeRight = o.x + o.w + radius + 0.35;
+        const safeTop = o.y - radius - 0.35;
+        const safeBottom = o.y + o.h + radius + 0.35;
+        const midX = Math.max(o.x, Math.min(cx, o.x + o.w));
+        const midY = Math.max(o.y, Math.min(cy, o.y + o.h));
+        candidates.push(
+          [safeLeft, midY],
+          [safeRight, midY],
+          [midX, safeTop],
+          [midX, safeBottom],
+          [safeLeft, safeTop],
+          [safeLeft, safeBottom],
+          [safeRight, safeTop],
+          [safeRight, safeBottom],
+        );
+      }
+      const valid = candidates
+        .map(([px, py]) => [
+          Math.max(radius, Math.min(mapW - radius, px)),
+          Math.max(radius, Math.min(mapH - radius, py)),
+        ])
+        .filter(
+          ([px, py]) =>
+            !nearObstacles(obstacles, px, py, radius + 120).some((o) => circleRect(px, py, radius, o.x, o.y, o.w, o.h)),
+        );
+      if (valid.length) {
+        valid.sort((a, b) => (a[0] - x) ** 2 + (a[1] - y) ** 2 - ((b[0] - x) ** 2 + (b[1] - y) ** 2));
+        [cx, cy] = valid[0];
+      }
+    }
+    return [cx, cy];
+  }
+
   function moveOnce(x, y, radius, dx, dy, mapW, mapH, obstacles) {
     let nx = Math.max(radius, Math.min(mapW - radius, x + dx));
     let ny = Math.max(radius, Math.min(mapH - radius, y + dy));
-    for (const o of obstacles || []) {
+    for (const o of nearObstacles(obstacles, nx, ny, radius + 90)) {
       if (!circleRect(nx, ny, radius, o.x, o.y, o.w, o.h)) continue;
       if (!circleRect(nx, y, radius, o.x, o.y, o.w, o.h)) ny = y;
       else if (!circleRect(x, ny, radius, o.x, o.y, o.w, o.h)) nx = x;
@@ -28,13 +142,13 @@
         ny = y;
       }
     }
-    return [nx, ny];
+    return resolveOverlap(nx, ny, radius, mapW, mapH, obstacles);
   }
 
-  function moveWithCollision(x, y, radius, dx, dy, mapW, mapH, obstacles) {
+  function moveWithCollision(x, y, radius, dx, dy, mapW, mapH, obstacles, collisionStep = 14) {
     const dist = Math.hypot(dx, dy);
-    if (dist <= 0.01) return [x, y];
-    const steps = Math.max(1, Math.ceil(dist / 14));
+    if (dist <= 0.01) return resolveOverlap(x, y, radius, mapW, mapH, obstacles);
+    const steps = Math.max(1, Math.ceil(dist / collisionStep));
     const stepX = dx / steps;
     const stepY = dy / steps;
     let cx = x;
@@ -80,7 +194,9 @@
         softFactor: 0.12,
         accel: 1800,
         decel: 2400,
+        collisionStep: 14,
         maxPending: 180,
+        trackPending: true,
       },
       options || {},
     );
@@ -99,11 +215,14 @@
         cfg.mapW,
         cfg.mapH,
         obstacles,
+        cfg.collisionStep,
       );
       player.x = x;
       player.y = y;
-      pending.push({ seq, dt, keys: Object.assign({}, keys), speedBoost: input.speedBoost || 1 });
-      while (pending.length > cfg.maxPending) pending.shift();
+      if (cfg.trackPending) {
+        pending.push({ seq, dt, keys: Object.assign({}, keys), speedBoost: input.speedBoost || 1 });
+        while (pending.length > cfg.maxPending) pending.shift();
+      }
       return true;
     }
 
@@ -120,6 +239,7 @@
           cfg.mapW,
           cfg.mapH,
           obstacles,
+          cfg.collisionStep,
         );
         player.x = pos[0];
         player.y = pos[1];
@@ -128,20 +248,30 @@
 
     function reconcile(player, authoritative, ackSeq, obstacles) {
       while (pending.length && pending[0].seq <= ackSeq) pending.shift();
-      const error = Math.hypot(authoritative.x - player.x, authoritative.y - player.y);
+      const predictedX = player.x;
+      const predictedY = player.y;
+      player.x = authoritative.x;
+      player.y = authoritative.y;
+      player.vx = authoritative.vx || 0;
+      player.vy = authoritative.vy || 0;
+      replay(player, obstacles);
+      const dx = player.x - predictedX;
+      const dy = player.y - predictedY;
+      const error = Math.hypot(dx, dy);
+      let mode = 'none';
       if (error > cfg.hardSnap) {
-        player.x = authoritative.x;
-        player.y = authoritative.y;
-        player.vx = authoritative.vx || 0;
-        player.vy = authoritative.vy || 0;
-        replay(player, obstacles);
+        mode = 'hard';
       } else if (error > cfg.softSnap) {
-        player.x += (authoritative.x - player.x) * cfg.softFactor;
-        player.y += (authoritative.y - player.y) * cfg.softFactor;
+        mode = 'soft';
       }
-      if (Number.isFinite(authoritative.vx)) player.vx = player.vx * 0.8 + authoritative.vx * 0.2;
-      if (Number.isFinite(authoritative.vy)) player.vy = player.vy * 0.8 + authoritative.vy * 0.2;
-      return { error, pending: pending.length };
+      return {
+        error,
+        dx,
+        dy,
+        mode,
+        pending: pending.length,
+        authoritativeError: Math.hypot(authoritative.x - predictedX, authoritative.y - predictedY),
+      };
     }
 
     function clear() {
@@ -160,7 +290,10 @@
   return {
     inputVector,
     circleRect,
+    prepareObstacles,
+    nearObstacles,
     moveWithCollision,
+    resolveOverlap,
     approach,
     integrateVelocity,
     createPredictor,

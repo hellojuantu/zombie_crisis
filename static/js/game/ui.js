@@ -22,6 +22,11 @@ export function createUI() {
   let joinTimer = null;
   let intermissionFeedbackTimer = null;
   let intermissionTalentKey = '';
+  let noticeCursor = 0;
+  let lastNoticeText = '';
+  let lastNoticeAt = 0;
+  const noticePool = [];
+  const noticeTimers = [];
   const introKey = 'zombie-crisis-intro-seen-v1';
   const taskNames = { fuse: '保险丝', sample: '样本', keycard: '门禁卡', lore: '档案' };
   const ammoNames = {
@@ -38,9 +43,17 @@ export function createUI() {
       .join(' · ');
   }
 
+  function ammoRows(pools = {}) {
+    return Object.keys(ammoNames).map((key) => ({
+      key,
+      name: ammoNames[key],
+      amount: Math.max(0, Math.round(pools[key] || 0)),
+    }));
+  }
+
   function setJoinLoading(on) {
     joinBtn.disabled = on;
-    joinBtn.textContent = on ? '加入中...' : '加入游戏';
+    joinBtn.textContent = on ? '部署中...' : '开始行动';
     if (joinTimer) clearTimeout(joinTimer);
     joinTimer = on ? setTimeout(() => setJoinLoading(false), 8000) : null;
   }
@@ -261,12 +274,29 @@ export function createUI() {
   }
 
   function notify(text, color = '#fff') {
-    const node = document.createElement('div');
-    node.className = 'nt';
+    if (!notifications || !noticePool.length || !text) return;
+    const now = performance.now();
+    if (text === lastNoticeText && now - lastNoticeAt < 280) return;
+    lastNoticeText = text;
+    lastNoticeAt = now;
+    const slot = noticeCursor % noticePool.length;
+    noticeCursor += 1;
+    const node = noticePool[slot];
+    if (noticeTimers[slot]) clearTimeout(noticeTimers[slot]);
+    node.classList.remove('show');
     node.style.color = color;
     node.textContent = text;
-    notifications.appendChild(node);
-    setTimeout(() => node.remove(), 1800);
+    node.style.visibility = 'visible';
+    requestAnimationFrame(() => node.classList.add('show'));
+    noticeTimers[slot] = setTimeout(() => {
+      node.classList.remove('show');
+      noticeTimers[slot] = setTimeout(() => {
+        if (!node.classList.contains('show')) {
+          node.style.visibility = 'hidden';
+          node.textContent = '';
+        }
+      }, 140);
+    }, 1500);
   }
 
   function maxRequirements(exits) {
@@ -384,11 +414,25 @@ export function createUI() {
       invKeycard: task.keycard || 0,
       invParts: Math.max(0, Math.round(me.materials ?? 0)),
       invLore: Math.max(0, Math.round(me.lore ?? state.obj?.lore ?? 0)),
-      invReserve: ammoSummary(me.ammoPools),
     };
     for (const [id, value] of Object.entries(values)) {
       const node = document.getElementById(id);
       if (node) node.textContent = value;
+    }
+    const ammoList = document.getElementById('inventoryAmmoList');
+    if (ammoList) {
+      ammoList.replaceChildren(
+        ...ammoRows(me.ammoPools).map((entry) => {
+          const row = document.createElement('div');
+          row.className = `inv-ammo-row ${entry.key === me.ammoType ? 'active' : ''}`;
+          const name = document.createElement('span');
+          name.textContent = entry.name;
+          const amount = document.createElement('b');
+          amount.textContent = entry.amount;
+          row.append(name, amount);
+          return row;
+        }),
+      );
     }
     const objective = document.getElementById('inventoryObjective');
     if (objective) objective.textContent = state.obj?.text || '先搜任务物，再确认撤离终端条件。';
@@ -483,9 +527,10 @@ export function createUI() {
     title.style.color = obj.readyExits ? '#48f0a0' : obj.boss ? '#ff4d7a' : '#ff4d5f';
     const sourceLeft = Math.max(0, Math.round(obj.infectionSource || 0));
     const sourceHint = sourceLeft > 0 ? ' · 感染源仍在活动' : '';
+    const roomPrompt = !inRoom && /^按 F /.test(me.facilityStatus || '') ? me.facilityStatus : '';
     stat.textContent = inRoom
       ? `${me.facilityStatus || '调查房间'} · 出口门返回走廊${sourceHint}`
-      : `${obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
+      : `${roomPrompt || obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
     bar.style.width = `${Math.round(Math.max(0, Math.min(1, obj.progress || 0)) * 100)}%`;
     bar.style.background = obj.readyExits ? '#48f0a0' : obj.boss ? '#ff4d7a' : '#ff4d5f';
     renderTaskList(obj.task || {}, state.exits || []);
@@ -527,6 +572,20 @@ export function createUI() {
       }),
     );
   }
+
+  function initNotifications() {
+    if (!notifications || noticePool.length) return;
+    for (let i = 0; i < 4; i += 1) {
+      const node = document.createElement('div');
+      node.className = 'nt';
+      node.style.setProperty('--slot', String(i));
+      node.style.visibility = 'hidden';
+      notifications.appendChild(node);
+      noticePool.push(node);
+    }
+  }
+
+  initNotifications();
 
   return {
     bindActions,

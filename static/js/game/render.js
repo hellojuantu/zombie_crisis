@@ -527,9 +527,17 @@ export function createRenderer(canvas, minimap) {
     for (let i = 0; i < list.length; i += 1) drawMission(list[i], view, time, i);
   }
 
-  function drawItems(items, view, time) {
+  function nearDynamic(entity, visibility) {
+    if (!visibility || !Number.isFinite(visibility.radius)) return true;
+    const dx = entity.x - visibility.x;
+    const dy = entity.y - visibility.y;
+    return dx * dx + dy * dy <= visibility.radius * visibility.radius;
+  }
+
+  function drawItems(items, view, time, visibility) {
     const { x: cx, y: cy } = view;
     for (const item of Object.values(items)) {
+      if (!nearDynamic(item, visibility)) continue;
       const sx = item.x - cx;
       const sy = item.y - cy;
       if (sx < -45 || sx > width + 45 || sy < -45 || sy > height + 45) continue;
@@ -578,6 +586,18 @@ export function createRenderer(canvas, minimap) {
         ctx.fillStyle = '#151b22';
         ctx.fillRect(-12, -5, 14, 4);
         ctx.fillRect(-12, 4, 24, 3);
+      } else if (item.type === 'lore') {
+        ctx.fillStyle = 'rgba(174, 230, 255, .16)';
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-17, -21, 34, 42, 5);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(237, 247, 255, .82)';
+        ctx.fillRect(-9, -10, 18, 3);
+        ctx.fillRect(-9, -2, 14, 3);
+        ctx.fillRect(-9, 6, 19, 3);
       } else if ((item.type || '').startsWith('weapon_')) {
         ctx.fillStyle = '#202833';
         ctx.strokeStyle = item.color;
@@ -625,16 +645,20 @@ export function createRenderer(canvas, minimap) {
       ctx.font = 'bold 12px Arial';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      if (!['fuse', 'sample', 'keycard', 'vehicle'].includes(item.type) && !(item.type || '').startsWith('weapon_'))
+      if (
+        !['fuse', 'sample', 'keycard', 'lore', 'vehicle'].includes(item.type) &&
+        !(item.type || '').startsWith('weapon_')
+      )
         ctx.fillText(item.icon, 0, 0);
       ctx.restore();
     }
   }
 
-  function drawBullets(bullets, view) {
+  function drawBullets(bullets, view, visibility) {
     const { x: cx, y: cy } = view;
     ctx.lineCap = 'round';
     for (const bullet of Object.values(bullets)) {
+      if (bullet.owner !== visibility?.myId && !nearDynamic(bullet, visibility)) continue;
       const sx = bullet.x - cx;
       const sy = bullet.y - cy;
       if (sx < -70 || sx > width + 70 || sy < -70 || sy > height + 70) continue;
@@ -671,9 +695,11 @@ export function createRenderer(canvas, minimap) {
     }
   }
 
-  function drawZombies(zombies, view, time) {
+  function drawZombies(zombies, view, time, visibility) {
     const { x: cx, y: cy } = view;
-    const sorted = Object.values(zombies).sort((a, b) => a.y - b.y);
+    const sorted = Object.values(zombies)
+      .filter((z) => nearDynamic(z, visibility))
+      .sort((a, b) => a.y - b.y);
     for (const z of sorted) {
       const sx = z.x - cx;
       const sy = z.y - cy;
@@ -951,8 +977,8 @@ export function createRenderer(canvas, minimap) {
     grad.addColorStop(1, `rgba(8,10,12,${(0.78 + pulse) * intensity})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
-    for (let i = 0; i < 8; i += 1) {
-      const y = ((time * (0.018 + i * 0.002) + i * 97) % (height + 160)) - 80;
+    for (let i = 0; i < 4; i += 1) {
+      const y = ((time * (0.014 + i * 0.002) + i * 157) % (height + 160)) - 80;
       ctx.fillStyle = hexrgba(color, (0.034 + (i % 3) * 0.012 + pulse * 0.4) * intensity);
       ctx.fillRect(-80, y, width + 160, 18 + (i % 4) * 9);
     }
@@ -1027,9 +1053,11 @@ export function createRenderer(canvas, minimap) {
     drawObstacles(state.obs, view);
     drawExits(state.exits, state.mission, view, time);
     drawEffects({ decals: effects.decals, rings: [], particles: [] }, view);
-    drawItems(state.items, view, time);
-    drawBullets(state.b, view);
-    drawZombies(state.z, view, time);
+    const dynamicRadius = Math.max(160, (state.dynamicAoi || 980) - 60);
+    const visibility = { x: me.x || 0, y: me.y || 0, radius: dynamicRadius, myId };
+    drawItems(state.items, view, time, visibility);
+    drawBullets(state.b, view, visibility);
+    drawZombies(state.z, view, time, visibility);
     drawEffects({ decals: [], rings: effects.rings, particles: effects.particles }, view);
     drawPlayers(state.pl, me, myId, visualMe, view, time);
     drawFogOverlay(state.fog, time);

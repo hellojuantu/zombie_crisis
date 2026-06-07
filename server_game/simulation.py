@@ -1,6 +1,7 @@
 """Authoritative zombie shooter simulation."""
 
 import heapq
+import json
 import math
 import random
 import time
@@ -39,6 +40,12 @@ from .config import (
     FOG_WAVE_MAX,
     FOG_WAVE_MAX_DIST,
     FOG_WAVE_MIN_DIST,
+    FOG_SPAWNS_PER_TICK,
+    ROOM_FOG_SPAWNS_PER_TICK,
+    ROOM_FOG_WAVE_BASE,
+    ROOM_FOG_WAVE_MAX,
+    ROOM_FOG_PRESSURE_BONUS_REASONS,
+    ROOM_ALARM_SPAWNS_ENABLED,
     INFECTION_SOURCE_BASE,
     INFECTION_SOURCE_MAX,
     INFECTION_SOURCE_STEP,
@@ -52,13 +59,13 @@ from .config import (
     INTEREST_RADIUS,
     ITEM_R,
     ITEM_SPAWN_DT,
-    BULLET_INTEREST_RADIUS,
+    DYNAMIC_AOI_RADIUS_MAIN,
+    DYNAMIC_AOI_RADIUS_ROOM,
     EVENT_INTEREST_RADIUS,
     EXTRACTION_CAPTURE_SECONDS,
     EXTRACTION_COUNT,
     EXTRACTION_DISCOVER_RADIUS,
     ITEM_TYPES,
-    ITEM_INTEREST_RADIUS,
     LEADERBOARD_SIZE,
     LEAPER_COOLDOWN,
     LEAPER_MAX_RANGE,
@@ -187,7 +194,21 @@ ROOM_SCENE_PREFIX = "room:"
 ROOM_W = 1900
 ROOM_H = 1180
 ROOM_DOOR_RADIUS = 74
-
+STAGE_FAILURE_REASONS = frozenset(("wipe", "abandon", "extraction_failed"))
+OBJECTIVE_ITEM_TYPES = frozenset(("fuse", "sample", "keycard", "lore"))
+ROOM_PRESSURE_QUIET_THRESHOLD = 1
+ROOM_PRESSURE_CONFIG = {
+    "lab": {"pool": 7, "pack": 1, "cooldown": 3.1, "initial": 2.2, "urgent": True},
+    "archive": {"pool": 5, "pack": 1, "cooldown": 3.7, "initial": 2.4, "urgent": True},
+    "morgue": {"pool": 6, "pack": 1, "cooldown": 3.3, "initial": 2.0, "urgent": True},
+    "security": {"pool": 5, "pack": 1, "cooldown": 3.8, "initial": 2.4, "urgent": True},
+    "armory": {"pool": 3, "pack": 1, "cooldown": 4.2, "initial": 3.0, "urgent": False},
+}
+ROOM_HAZARD_DPS = {
+    "lab": 0.9,
+    "archive": 0.45,
+    "security": 0.35,
+}
 
 TALENT_DEFS = {
     "vitality": {
@@ -246,6 +267,7 @@ class Game:
         self.maze_rows = MAZE_ROWS
         self.map_features = []
         self.room_scenes = {}
+        self.room_nav_cache = {}
         self.facility_spawn_timer = 0.0
         self.lab_sample_until = 0.0
         self.floor_points = []
@@ -269,6 +291,8 @@ class Game:
         self.director_timer = 0.0
         self.next_fog_wave_at = 0.0
         self.fog_active_until = 0.0
+        self.pending_fog_spawns = []
+        self.room_alarm_spawns_enabled = ROOM_ALARM_SPAWNS_ENABLED
         self.intermission = None
         self.running = False
         self.last_tick = time.monotonic()
@@ -277,11 +301,16 @@ class Game:
             "tick_ms": 0.0,
             "snap_ms": 0.0,
             "sync_ms": 0.0,
+            "payload_bytes": 0.0,
+            "payload_max_bytes": 0,
+            "overlap_resolves": 0,
             "players": 0,
             "zombies": 0,
             "bullets": 0,
             "items": 0,
         }
+        self._next_payload_perf_at = 0.0
+        self._overlap_resolves_this_tick = 0
         self._gen_obstacles()
         self._start_stage_tasks()
         for _ in range(min(INITIAL_ZOMBIES, self.wave_remaining)):
@@ -832,10 +861,11 @@ class Game:
     def _emit_near(self, event, data, x, y, radius=EVENT_INTEREST_RADIUS, include=None, scene=SCENE_MAIN):
         targets = []
         event_scene = scene or data.get("scene") or SCENE_MAIN
+        radius_sq = radius * radius
         for sid, player in self.players.items():
             if self._entity_scene(player) != event_scene:
                 continue
-            if math.hypot(player["x"] - x, player["y"] - y) <= radius:
+            if (player["x"] - x) ** 2 + (player["y"] - y) ** 2 <= radius_sq:
                 targets.append(sid)
         if include:
             targets.append(include)
@@ -850,6 +880,8 @@ class Game:
         elapsed = (time.perf_counter() - started) * 1000
         old = self.perf.get("tick_ms", 0.0)
         self.perf["tick_ms"] = elapsed if old <= 0 else old * 0.85 + elapsed * 0.15
+        self.perf["overlap_resolves"] = self._overlap_resolves_this_tick
+        self._overlap_resolves_this_tick = 0
         self.perf["players"] = len(self.players)
         self.perf["zombies"] = len(self.zombies)
         self.perf["bullets"] = len(self.bullets)
@@ -860,15 +892,35 @@ class Game:
         old = self.perf.get("snap_ms", 0.0)
         self.perf["snap_ms"] = elapsed if old <= 0 else old * 0.85 + elapsed * 0.15
 
+    def _record_payload_perf(self, snapshots):
+        now = time.perf_counter()
+        if self.perf.get("payload_max_bytes", 0) and now < self._next_payload_perf_at:
+            return
+        self._next_payload_perf_at = now + 0.75
+        sizes = [
+            len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
+            for snapshot in snapshots
+        ]
+        if not sizes:
+            return
+        avg_size = sum(sizes) / len(sizes)
+        old = self.perf.get("payload_bytes", 0.0)
+        self.perf["payload_bytes"] = avg_size if old <= 0 else old * 0.85 + avg_size * 0.15
+        self.perf["payload_max_bytes"] = max(sizes)
+
     def _perf_snapshot(self):
         return {
             "tick_ms": round(self.perf.get("tick_ms", 0.0), 2),
             "snap_ms": round(self.perf.get("snap_ms", 0.0), 2),
             "sync_ms": round(self.perf.get("sync_ms", 0.0), 2),
+            "payload_bytes": round(self.perf.get("payload_bytes", 0.0), 1),
+            "payload_max_bytes": int(self.perf.get("payload_max_bytes", 0)),
+            "overlap_resolves": int(self.perf.get("overlap_resolves", 0)),
             "players": len(self.players),
             "zombies": len(self.zombies),
             "bullets": len(self.bullets),
             "items": len(self.items),
+            "fog_queue": self._pending_fog_spawn_count(),
             "snapshot_hz": SNAPSHOT_HZ,
         }
 
@@ -1069,6 +1121,7 @@ class Game:
 
     def _build_room_scenes(self):
         self.room_scenes = {}
+        self._invalidate_room_nav_cache()
         palettes = {
             "medbay": "#48f0a0",
             "generator": "#66d9ff",
@@ -1168,9 +1221,17 @@ class Game:
                 "name": room.get("label", "设施"),
                 "mw": w,
                 "mh": h,
-                "spawn": (300, door_y),
+                "spawn": (240, door_y),
                 "exit": {"x": 130, "y": door_y, "radius": ROOM_DOOR_RADIUS},
                 "loot": {"x": 250, "y": 170, "w": w - 420, "h": h - 340},
+                "nav_points": [
+                    (w * 0.47, 310),
+                    (w * 0.64, 310),
+                    (w * 0.47, h - 250),
+                    (w * 0.64, h - 250),
+                    (260, door_y),
+                    (w - 260, door_y),
+                ],
                 "zombie_points": [
                     (w - 240, 190),
                     (w - 260, h - 210),
@@ -1264,7 +1325,7 @@ class Game:
     def _zombie_waypoint(self, zombie, target, now):
         """Compute the next maze-aware waypoint for a zombie."""
         if self._entity_scene(zombie) != SCENE_MAIN:
-            return target
+            return self._room_zombie_waypoint(zombie, target)
         target_id = target.get("id")
         start_cell = self._world_to_cell(zombie["x"], zombie["y"])
         end_cell = self._world_to_cell(target["x"], target["y"])
@@ -1314,6 +1375,159 @@ class Game:
 
         waypoint = self._cell_center(next_cell)
         return {"x": waypoint[0], "y": waypoint[1], "id": target_id, "radius": target.get("radius", PLAYER_R)}
+
+    def _room_zombie_waypoint(self, zombie, target):
+        scene_id = self._entity_scene(zombie)
+        path_radius = zombie.get("radius", 16) + 8
+        if not self._segment_blocked(zombie["x"], zombie["y"], target["x"], target["y"], radius=path_radius, scene=scene_id):
+            return target
+        path = self._room_visibility_path(scene_id, zombie, target, path_radius)
+        if path:
+            for wx, wy in path[1:]:
+                if math.hypot(zombie["x"] - wx, zombie["y"] - wy) > zombie.get("radius", 16) * 2.1:
+                    return {"x": wx, "y": wy, "id": target.get("id"), "radius": target.get("radius", PLAYER_R)}
+            return target
+        scene = self._scene_def(scene_id)
+        best = None
+        for idx, point in enumerate(scene.get("nav_points", [])):
+            wx, wy = point
+            wx, wy = self._resolve_obstacle_overlap(wx, wy, zombie.get("radius", 16), scene_id)
+            if math.hypot(zombie["x"] - wx, zombie["y"] - wy) < zombie.get("radius", 16) * 2.4:
+                continue
+            if any(circ_rect(wx, wy, zombie.get("radius", 16), o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(wx, wy, zombie.get("radius", 16) + MAZE_WALL + 4, scene=scene_id)):
+                continue
+            z_blocked = self._segment_blocked(zombie["x"], zombie["y"], wx, wy, radius=path_radius, scene=scene_id)
+            target_blocked = self._segment_blocked(wx, wy, target["x"], target["y"], radius=path_radius, scene=scene_id)
+            if z_blocked and target_blocked:
+                continue
+            score = (
+                math.hypot(zombie["x"] - wx, zombie["y"] - wy)
+                + math.hypot(target["x"] - wx, target["y"] - wy)
+                + (5000 if z_blocked else 0)
+                + (1600 if target_blocked else 0)
+                + idx * 6
+            )
+            if best is None or score < best[0]:
+                best = (score, wx, wy)
+        if not best:
+            return target
+        _, wx, wy = best
+        return {"x": wx, "y": wy, "id": target.get("id"), "radius": target.get("radius", PLAYER_R)}
+
+    def _room_nav_point_clear(self, scene_id, x, y, radius):
+        scene = self._scene_def(scene_id)
+        mw = scene.get("mw", ROOM_W)
+        mh = scene.get("mh", ROOM_H)
+        if x < radius or y < radius or x > mw - radius or y > mh - radius:
+            return False
+        return not self._overlaps_obstacle(x, y, radius, scene_id)
+
+    def _room_nav_points(self, scene_id, radius):
+        scene = self._scene_def(scene_id)
+        margin = radius + 22
+        points = list(scene.get("nav_points", []))
+        for obstacle in scene.get("obs", []):
+            if obstacle.get("kind") == "wall":
+                continue
+            ox, oy = obstacle["x"], obstacle["y"]
+            ow, oh = obstacle["w"], obstacle["h"]
+            points.extend((
+                (ox - margin, oy - margin),
+                (ox + ow + margin, oy - margin),
+                (ox - margin, oy + oh + margin),
+                (ox + ow + margin, oy + oh + margin),
+                (ox + ow / 2, oy - margin),
+                (ox + ow / 2, oy + oh + margin),
+                (ox - margin, oy + oh / 2),
+                (ox + ow + margin, oy + oh / 2),
+            ))
+        clean = []
+        seen = set()
+        for px, py in points:
+            rx, ry = self._resolve_obstacle_overlap(px, py, radius, scene_id)
+            key = (round(rx, 1), round(ry, 1))
+            if key in seen or not self._room_nav_point_clear(scene_id, rx, ry, radius):
+                continue
+            seen.add(key)
+            clean.append((rx, ry))
+        return clean
+
+    def _invalidate_room_nav_cache(self, scene_id=None):
+        if scene_id is None:
+            self.room_nav_cache.clear()
+            return
+        for key in list(self.room_nav_cache.keys()):
+            if key[0] == scene_id:
+                self.room_nav_cache.pop(key, None)
+
+    def _room_nav_graph(self, scene_id, radius):
+        key = (scene_id, round(radius, 1))
+        cached = self.room_nav_cache.get(key)
+        if cached:
+            return cached
+        nodes = self._room_nav_points(scene_id, radius)
+        adj = [[] for _ in nodes]
+        for i, point in enumerate(nodes):
+            ax, ay = point
+            for j in range(i + 1, len(nodes)):
+                bx, by = nodes[j]
+                if self._segment_blocked(ax, ay, bx, by, radius=radius, scene=scene_id):
+                    continue
+                step = math.hypot(bx - ax, by - ay)
+                adj[i].append((j, step))
+                adj[j].append((i, step))
+        cached = (nodes, adj)
+        self.room_nav_cache[key] = cached
+        return cached
+
+    def _room_visibility_path(self, scene_id, zombie, target, path_radius):
+        start = (zombie["x"], zombie["y"])
+        goal = (target["x"], target["y"])
+        nodes, adj = self._room_nav_graph(scene_id, path_radius)
+        start_neighbors = []
+        goal_neighbors = {}
+        for idx, (wx, wy) in enumerate(nodes):
+            if not self._segment_blocked(start[0], start[1], wx, wy, radius=path_radius, scene=scene_id):
+                start_neighbors.append((idx, math.hypot(wx - start[0], wy - start[1])))
+            if not self._segment_blocked(wx, wy, goal[0], goal[1], radius=path_radius, scene=scene_id):
+                goal_neighbors[idx] = math.hypot(goal[0] - wx, goal[1] - wy)
+        if not start_neighbors or not goal_neighbors:
+            return None
+        goal_node = -1
+        start_node = -2
+        dist_to = {start_node: 0.0}
+        prev = {}
+        heap = [(0.0, start_node)]
+        visited = set()
+        while heap:
+            cost, idx = heapq.heappop(heap)
+            if idx in visited:
+                continue
+            visited.add(idx)
+            if idx == goal_node:
+                path = [goal]
+                cur = idx
+                while cur in prev:
+                    cur = prev[cur]
+                    if cur >= 0:
+                        path.append(nodes[cur])
+                path.append(start)
+                path.reverse()
+                return path
+            if idx == start_node:
+                neighbors = start_neighbors
+            else:
+                neighbors = list(adj[idx])
+                if idx in goal_neighbors:
+                    neighbors.append((goal_node, goal_neighbors[idx]))
+            for next_idx, step in neighbors:
+                new_cost = cost + step
+                if new_cost >= dist_to.get(next_idx, float("inf")):
+                    continue
+                dist_to[next_idx] = new_cost
+                prev[next_idx] = idx
+                heapq.heappush(heap, (new_cost, next_idx))
+        return None
 
 
     def _jitter_floor_point(self, point, jitter=MAZE_SAFE_JITTER):
@@ -1385,6 +1599,7 @@ class Game:
             "sceneName": scene.get("name", "设施楼层"),
             "mw": scene.get("mw", MAP_W),
             "mh": scene.get("mh", MAP_H),
+            "dynamicAoi": self._dynamic_aoi_radius(scene.get("id", SCENE_MAIN)),
             "obs": self.obstacles if is_main else scene.get("obs", []),
             "features": self.map_features if is_main else scene.get("features", []),
             "exits": self._extractions_snapshot() if is_main else [],
@@ -1415,6 +1630,12 @@ class Game:
         })
         self._emit_to("scene_change", payload, [sid])
 
+    def refresh_scene(self, sid):
+        if sid not in self.players:
+            return False
+        self._emit_scene_change(sid, reason="refresh")
+        return True
+
     def _scene_has_players(self, scene_id):
         if not scene_id:
             return False
@@ -1423,6 +1644,10 @@ class Game:
     def _sweep_empty_room_scene(self, scene_id):
         if not scene_id or scene_id == SCENE_MAIN or self._scene_has_players(scene_id):
             return
+        self.pending_fog_spawns = [
+            entry for entry in self.pending_fog_spawns
+            if entry.get("scene") != scene_id
+        ]
         for entities in (self.zombies, self.bullets, self.items):
             for eid, entity in list(entities.items()):
                 if self._entity_scene(entity) == scene_id:
@@ -1459,6 +1684,12 @@ class Game:
                     seen.add(idx)
                     yield obstacle
 
+    def _overlaps_obstacle(self, x, y, radius, scene=SCENE_MAIN):
+        return any(
+            circ_rect(x, y, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"])
+            for obstacle in self._near_obstacles(x, y, radius + MAZE_WALL + 4, scene=scene)
+        )
+
     def _near(self, grid, x, y, radius):
         c0x = math.floor((x - radius) / SPATIAL_CELL)
         c1x = math.floor((x + radius) / SPATIAL_CELL)
@@ -1490,12 +1721,84 @@ class Game:
                     nx = x
                 else:
                     nx, ny = x, y
-        return nx, ny
+        return self._resolve_obstacle_overlap(nx, ny, radius, scene)
+
+    def _resolve_obstacle_overlap(self, x, y, radius, scene=SCENE_MAIN):
+        scene_def = self._scene_def(scene)
+        mw = scene_def.get("mw", MAP_W)
+        mh = scene_def.get("mh", MAP_H)
+        cx = max(radius, min(mw - radius, x))
+        cy = max(radius, min(mh - radius, y))
+        resolved = False
+        for _ in range(3):
+            moved = False
+            for obstacle in self._near_obstacles(cx, cy, radius + MAZE_WALL + 4, scene=scene):
+                ox, oy = obstacle["x"], obstacle["y"]
+                ow, oh = obstacle["w"], obstacle["h"]
+                nearest_x = clamp(cx, ox, ox + ow)
+                nearest_y = clamp(cy, oy, oy + oh)
+                dx = cx - nearest_x
+                dy = cy - nearest_y
+                dist_sq = dx * dx + dy * dy
+                if dist_sq >= radius * radius:
+                    continue
+                if dist_sq > 0.0001:
+                    dist = math.sqrt(dist_sq)
+                    push = radius - dist + 0.35
+                    cx += dx / dist * push
+                    cy += dy / dist * push
+                else:
+                    distances = (
+                        (abs(cx - ox), ox - radius - 0.35, cy),
+                        (abs((ox + ow) - cx), ox + ow + radius + 0.35, cy),
+                        (abs(cy - oy), cx, oy - radius - 0.35),
+                        (abs((oy + oh) - cy), cx, oy + oh + radius + 0.35),
+                    )
+                    _, cx, cy = min(distances, key=lambda item: item[0])
+                cx = max(radius, min(mw - radius, cx))
+                cy = max(radius, min(mh - radius, cy))
+                moved = True
+                resolved = True
+            if not moved:
+                break
+        if self._overlaps_obstacle(cx, cy, radius, scene):
+            candidates = []
+            for obstacle in self._near_obstacles(cx, cy, radius + MAZE_WALL + 4, scene=scene):
+                ox, oy = obstacle["x"], obstacle["y"]
+                ow, oh = obstacle["w"], obstacle["h"]
+                safe_left = ox - radius - 0.35
+                safe_right = ox + ow + radius + 0.35
+                safe_top = oy - radius - 0.35
+                safe_bottom = oy + oh + radius + 0.35
+                mid_x = clamp(cx, ox, ox + ow)
+                mid_y = clamp(cy, oy, oy + oh)
+                candidates.extend((
+                    (safe_left, mid_y),
+                    (safe_right, mid_y),
+                    (mid_x, safe_top),
+                    (mid_x, safe_bottom),
+                    (safe_left, safe_top),
+                    (safe_left, safe_bottom),
+                    (safe_right, safe_top),
+                    (safe_right, safe_bottom),
+                ))
+            valid = []
+            for px, py in candidates:
+                px = max(radius, min(mw - radius, px))
+                py = max(radius, min(mh - radius, py))
+                if not self._overlaps_obstacle(px, py, radius, scene):
+                    valid.append((px, py))
+            if valid:
+                cx, cy = min(valid, key=lambda point: (point[0] - x) ** 2 + (point[1] - y) ** 2)
+                resolved = True
+        if resolved:
+            self._overlap_resolves_this_tick += 1
+        return cx, cy
 
     def move_col(self, x, y, radius, dx, dy, scene=SCENE_MAIN):
         dist = math.hypot(dx, dy)
         if dist <= 0.01:
-            return x, y
+            return self._resolve_obstacle_overlap(x, y, radius, scene)
         steps = max(1, math.ceil(dist / MOVE_COLLISION_STEP))
         step_x = dx / steps
         step_y = dy / steps
@@ -1507,13 +1810,16 @@ class Game:
             cx, cy = nx, ny
         return cx, cy
 
-    def _room_spawn(self, scene_id, near=None, min_player_dist=0, max_player_dist=None, jitter=42):
+    def _room_spawn(self, scene_id, near=None, min_player_dist=0, max_player_dist=None, jitter=42, preferred_index=None):
         scene = self._scene_def(scene_id)
         points = scene.get("zombie_points") or [
             (scene.get("mw", ROOM_W) - 240, 190),
             (scene.get("mw", ROOM_W) - 260, scene.get("mh", ROOM_H) - 210),
             (scene.get("mw", ROOM_W) * 0.62, scene.get("mh", ROOM_H) * 0.5),
         ]
+        if preferred_index is not None and points:
+            start = int(preferred_index) % len(points)
+            points = points[start:] + points[:start]
         candidates = []
         for point in points:
             if near is not None:
@@ -1526,7 +1832,10 @@ class Game:
         if not candidates:
             candidates = points
         for _ in range(30):
-            px, py = random.choice(candidates)
+            if preferred_index is None:
+                px, py = random.choice(candidates)
+            else:
+                px, py = candidates[_ % len(candidates)]
             x = clamp(px + random.uniform(-jitter, jitter), PLAYER_R, scene.get("mw", ROOM_W) - PLAYER_R)
             y = clamp(py + random.uniform(-jitter, jitter), PLAYER_R, scene.get("mh", ROOM_H) - PLAYER_R)
             if any(circ_rect(x, y, PLAYER_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, PLAYER_R + MAZE_WALL + 4, scene=scene_id)):
@@ -1569,16 +1878,17 @@ class Game:
             )
         return self._floor_spawn(min_player_dist=430, far_from_spawn=True)
 
-    def safe_fog_spawn(self, origin=None, scene=SCENE_MAIN):
+    def safe_fog_spawn(self, origin=None, scene=SCENE_MAIN, spawn_index=None):
         if origin and origin.get("scene"):
             scene = origin.get("scene")
         if scene and scene != SCENE_MAIN:
             return self._room_spawn(
                 scene,
                 near=origin,
-                min_player_dist=130 if origin else 0,
-                max_player_dist=760 if origin else None,
-                jitter=58,
+                min_player_dist=260 if origin else 0,
+                max_player_dist=None,
+                jitter=34,
+                preferred_index=spawn_index,
             )
         if origin:
             return self._floor_spawn(
@@ -1653,6 +1963,81 @@ class Game:
         elif source == "infection":
             self.infection_source_remaining = max(0, self.infection_source_remaining - 1)
 
+    def _pending_fog_spawn_count(self):
+        return len(getattr(self, "pending_fog_spawns", []))
+
+    def _queue_fog_spawns(self, count, now, reason="director", urgent=True, origin=None, scene=SCENE_MAIN):
+        if count <= 0 or len(self.zombies) + self._pending_fog_spawn_count() >= MAX_ZOMBIES:
+            return 0, 0
+        available = self.wave_remaining + self.infection_source_remaining
+        if available <= 0:
+            return 0, 0
+        budget = min(count, available, MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count())
+        queued = 0
+        source_count = 0
+        origin_payload = dict(origin) if origin else None
+        for index in range(max(0, budget)):
+            source = self._next_spawn_budget_source(allow_infection_source=True)
+            if not source:
+                break
+            self._consume_spawn_budget(source)
+            if source == "infection":
+                source_count += 1
+            self.pending_fog_spawns.append({
+                "scene": scene or SCENE_MAIN,
+                "origin": origin_payload,
+                "ztype": self._fog_zombie_type(index),
+                "source": source,
+                "rally_until": now + 2.2,
+                "reason": reason,
+                "spawn_index": index,
+            })
+            queued += 1
+        return queued, source_count
+
+    def _process_pending_fog_spawns(self, now):
+        if not self.pending_fog_spawns:
+            return 0
+        spawn_now = []
+        keep = []
+        scene_budget_used = {}
+        for entry in self.pending_fog_spawns:
+            scene = entry.get("scene", SCENE_MAIN)
+            limit = FOG_SPAWNS_PER_TICK if scene == SCENE_MAIN else ROOM_FOG_SPAWNS_PER_TICK
+            if len(self.zombies) + len(spawn_now) >= MAX_ZOMBIES:
+                keep.append(entry)
+                continue
+            if scene_budget_used.get(scene, 0) >= limit:
+                keep.append(entry)
+                continue
+            scene_budget_used[scene] = scene_budget_used.get(scene, 0) + 1
+            spawn_now.append(entry)
+        self.pending_fog_spawns = keep
+
+        spawned = 0
+        for entry in spawn_now:
+            x, y = self.safe_fog_spawn(
+                origin=entry.get("origin"),
+                scene=entry.get("scene", SCENE_MAIN),
+                spawn_index=entry.get("spawn_index"),
+            )
+            zid = self.spawn_zombie(
+                x=x,
+                y=y,
+                ztype=entry.get("ztype") or self._pressure_zombie_type(urgent=True),
+                emit=False,
+                pressure=True,
+                scene=entry.get("scene", SCENE_MAIN),
+            )
+            if not zid:
+                continue
+            zombie = self.zombies[zid]
+            zombie["rally_until"] = max(zombie.get("rally_until", 0), entry.get("rally_until", now + 1.2))
+            if entry.get("source") == "infection":
+                zombie["source"] = "infection"
+            spawned += 1
+        return spawned
+
     def _spawn_pressure_pack(self, count, now, urgent=False, allow_infection_source=False, origin=None, scene=None):
         if count <= 0 or len(self.zombies) >= MAX_ZOMBIES:
             return 0
@@ -1673,7 +2058,14 @@ class Game:
             x = y = None
             if origin:
                 x, y = self.safe_fog_spawn(origin=origin, scene=spawn_scene)
-            zid = self.spawn_zombie(x=x, y=y, ztype=self._pressure_zombie_type(urgent=urgent), pressure=True, scene=spawn_scene)
+            zid = self.spawn_zombie(
+                x=x,
+                y=y,
+                ztype=self._pressure_zombie_type(urgent=urgent),
+                emit=False,
+                pressure=True,
+                scene=spawn_scene,
+            )
             if not zid:
                 continue
             self._consume_spawn_budget(source)
@@ -1685,7 +2077,7 @@ class Game:
                 zombie["rally_until"] = max(zombie.get("rally_until", 0), now + 1.2)
             if source == "infection":
                 zombie["source"] = "infection"
-        if spawned_from_source:
+        if spawned_from_source and spawn_scene == SCENE_MAIN:
             self.fog_active_until = max(self.fog_active_until, now + 3.2)
         return spawned
 
@@ -1789,65 +2181,80 @@ class Game:
     def _trigger_fog_wave(self, now, reason="director", force=False, origin=None, scene=None):
         if len(self.zombies) >= MAX_ZOMBIES:
             return 0
-        if not force and now < self.next_fog_wave_at:
+        spawn_scene = scene or (origin.get("scene") if origin else None) or SCENE_MAIN
+        indoor = spawn_scene != SCENE_MAIN
+        if indoor and not self.room_alarm_spawns_enabled:
             return 0
-        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead")))
+        if not force and not indoor and now < self.next_fog_wave_at:
+            return 0
+        alive_count = max(
+            1,
+            sum(
+                1 for player in self.players.values()
+                if not player.get("dead") and self._entity_scene(player) == spawn_scene
+            ),
+        )
         fog_scene = self._fog_scene(reason)
+        if indoor:
+            pressure_bonus = 1 if reason in ROOM_FOG_PRESSURE_BONUS_REASONS else 0
+            desired_count = ROOM_FOG_WAVE_BASE + min(2, max(0, self.wave - 1) // 2) + pressure_bonus
+            max_count = ROOM_FOG_WAVE_MAX
+        else:
+            desired_count = (
+                FOG_WAVE_COUNT_BASE
+                + alive_count * FOG_WAVE_COUNT_PER_PLAYER
+                + min(10, self.wave * 2)
+                + fog_scene.get("bonus", 0)
+            )
+            max_count = FOG_WAVE_MAX
         count = min(
-            FOG_WAVE_MAX,
-            FOG_WAVE_COUNT_BASE + alive_count * FOG_WAVE_COUNT_PER_PLAYER + min(10, self.wave * 2) + fog_scene.get("bonus", 0),
+            max_count,
+            desired_count,
             self.wave_remaining + self.infection_source_remaining,
-            MAX_ZOMBIES - len(self.zombies),
+            MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count(),
         )
         if count <= 0:
             return 0
-        spawned = 0
-        spawned_from_source = 0
-        sx = 0.0
-        sy = 0.0
         spawn_origin = None
-        spawn_scene = scene or (origin.get("scene") if origin else None) or SCENE_MAIN
         if origin:
-            spawn_origin = {"x": origin["x"], "y": origin["y"]}
-        for i in range(max(0, count)):
-            source = self._next_spawn_budget_source(allow_infection_source=True)
-            if not source:
-                break
-            x, y = self.safe_fog_spawn(origin=spawn_origin, scene=spawn_scene)
-            zid = self.spawn_zombie(x=x, y=y, ztype=self._fog_zombie_type(i), emit=True, pressure=True, scene=spawn_scene)
-            if not zid:
-                continue
-            self._consume_spawn_budget(source)
-            spawned += 1
-            if source == "infection":
-                spawned_from_source += 1
-            sx += x
-            sy += y
-            zombie = self.zombies[zid]
-            zombie["rally_until"] = max(zombie.get("rally_until", 0), now + 2.2)
-            if source == "infection":
-                zombie["source"] = "infection"
-        if not spawned:
+            spawn_origin = {"x": origin["x"], "y": origin["y"], "scene": spawn_scene}
+        queued, spawned_from_source = self._queue_fog_spawns(
+            count,
+            now,
+            reason=reason,
+            urgent=True,
+            origin=spawn_origin,
+            scene=spawn_scene,
+        )
+        if not queued:
             return 0
-        cooldown = max(8.0, FOG_WAVE_COOLDOWN - min(6.0, self.wave * 0.7))
-        self.next_fog_wave_at = now + cooldown
         duration = fog_scene.get("duration", 4.8)
-        self.fog_active_until = now + duration
-        avg_x = sx / spawned
-        avg_y = sy / spawned
-        event_x = spawn_origin["x"] if spawn_origin else avg_x
-        event_y = spawn_origin["y"] if spawn_origin else avg_y
+        if not indoor:
+            cooldown = max(8.0, FOG_WAVE_COOLDOWN - min(6.0, self.wave * 0.7))
+            self.next_fog_wave_at = now + cooldown
+            self.fog_active_until = now + duration
+        if spawn_origin:
+            event_x = spawn_origin["x"]
+            event_y = spawn_origin["y"]
+        else:
+            viewers = [
+                player for player in self.players.values()
+                if not player.get("dead") and self._entity_scene(player) == spawn_scene
+            ]
+            target = random.choice(viewers) if viewers else None
+            event_x = target["x"] if target else self.spawn_point[0]
+            event_y = target["y"] if target else self.spawn_point[1]
         payload = {
             "reason": reason,
             "scene": fog_scene.get("name", "雾袭"),
             "sceneId": spawn_scene,
-            "count": spawned,
+            "count": queued,
             "wave": self.wave,
             "duration": duration,
             "x": round(event_x, 1),
             "y": round(event_y, 1),
-            "spawnX": round(avg_x, 1),
-            "spawnY": round(avg_y, 1),
+            "spawnX": round(event_x, 1),
+            "spawnY": round(event_y, 1),
             "col": fog_scene.get("color", "#d6eceb"),
             "sourceCount": spawned_from_source,
             "sourceRemaining": self.infection_source_remaining,
@@ -1855,8 +2262,8 @@ class Game:
         if origin:
             self._emit_near("fog_wave", payload, event_x, event_y, radius=EVENT_INTEREST_RADIUS * 1.2, scene=spawn_scene)
         else:
-            self._emit("fog_wave", payload)
-        return spawned
+            self._emit_near("fog_wave", payload, event_x, event_y, radius=max(MAP_W, MAP_H, ROOM_W, ROOM_H) * 2, scene=spawn_scene)
+        return queued
 
     def spawn_zombie(self, x=None, y=None, ztype=None, emit=True, pressure=False, scene=SCENE_MAIN):
         if len(self.zombies) >= MAX_ZOMBIES:
@@ -1882,7 +2289,6 @@ class Game:
             "color": meta["color"],
             "target": None,
             "leap_cd": 0,
-            "spit_cd": 0,
             "slam_cd": 0,
             "phase": 0,
             "scream_cd": 0,
@@ -1898,8 +2304,8 @@ class Game:
             self._emit_near("z_spawn", self._zombie_event(zid, self.zombies[zid]), x, y, scene=scene or SCENE_MAIN)
         return zid
 
-    def spawn_item(self, x=None, y=None, item_type=None, emit=True, scene=SCENE_MAIN):
-        if len(self.items) >= MAX_ITEMS:
+    def spawn_item(self, x=None, y=None, item_type=None, emit=True, scene=SCENE_MAIN, force=False):
+        if len(self.items) >= MAX_ITEMS and not force:
             return None
         if x is None:
             x, y = self.safe_spawn(scene=scene)
@@ -1983,6 +2389,8 @@ class Game:
                 "x": round(player["x"], 1),
                 "y": round(player["y"], 1),
                 "col": player["color"],
+                "sceneId": self._entity_scene(player),
+                "_targets": [sid],
             })
         self._maybe_combo_bonus(player, now)
 
@@ -2117,6 +2525,7 @@ class Game:
                 "x": round(item["x"], 1),
                 "y": round(item["y"], 1),
                 "col": item["color"],
+                "sceneId": self._entity_scene(item),
             })
         elif typ == "rapid":
             player["rapid_until"] = now + 7.5
@@ -2152,6 +2561,17 @@ class Game:
             amount = random.randint(MATERIAL_PICKUP_MIN, MATERIAL_PICKUP_MAX)
             player["materials"] = player.get("materials", 0) + amount
             item["amount"] = amount
+        elif typ == "lore":
+            player["lore"] = player.get("lore", 0) + 1
+            item["amount"] = 1
+            file_text = CASE_FILES[(player["lore"] - 1) % len(CASE_FILES)]
+            self._emit_to("lore_found", {
+                "pid": sid,
+                "count": player["lore"],
+                "text": file_text,
+                "col": item["color"],
+                "sceneId": self._entity_scene(item),
+            }, [sid])
         elif typ == "nuke":
             self._nuke(sid, item["x"], item["y"], now)
         elif typ.startswith("weapon_"):
@@ -2312,35 +2732,25 @@ class Game:
         return any(self._feature_contains(room, x, y, padding=padding) for room in self._rooms_by_effect(effect))
 
     def _room_return_point(self, room, player):
-        if not room:
-            return self.spawn_point
-        x = finite_float(player.get("main_x"), room.get("x", self.spawn_point[0]) + room.get("w", 0) / 2)
-        y = finite_float(player.get("main_y"), room.get("y", self.spawn_point[1]) + room.get("h", 0) / 2)
-        left = room.get("x", 0)
-        top = room.get("y", 0)
-        right = left + room.get("w", 0)
-        bottom = top + room.get("h", 0)
-        margin = PLAYER_R * 2.8
-        distances = {
-            "left": abs(x - left),
-            "right": abs(right - x),
-            "top": abs(y - top),
-            "bottom": abs(bottom - y),
-        }
-        side = min(distances, key=distances.get)
-        if side == "left":
-            x = left - margin
-            y = clamp(y, top, bottom)
-        elif side == "right":
-            x = right + margin
-            y = clamp(y, top, bottom)
-        elif side == "top":
-            y = top - margin
-            x = clamp(x, left, right)
-        else:
-            y = bottom + margin
-            x = clamp(x, left, right)
-        return clamp(x, PLAYER_R, MAP_W - PLAYER_R), clamp(y, PLAYER_R, MAP_H - PLAYER_R)
+        fallback_x = (room or {}).get("x", self.spawn_point[0]) + (room or {}).get("w", 0) / 2
+        fallback_y = (room or {}).get("y", self.spawn_point[1]) + (room or {}).get("h", 0) / 2
+        target_x = finite_float(player.get("main_x"), fallback_x)
+        target_y = finite_float(player.get("main_y"), fallback_y)
+        target_x = clamp(target_x, PLAYER_R, MAP_W - PLAYER_R)
+        target_y = clamp(target_y, PLAYER_R, MAP_H - PLAYER_R)
+        if not self._overlaps_obstacle(target_x, target_y, PLAYER_R, SCENE_MAIN):
+            return target_x, target_y
+
+        candidates = [(target_x, target_y)]
+        candidates.extend(sorted(
+            self.floor_points or [self.spawn_point],
+            key=lambda point: (point[0] - target_x) ** 2 + (point[1] - target_y) ** 2,
+        )[:8])
+        for cx, cy in candidates:
+            rx, ry = self._resolve_obstacle_overlap(cx, cy, PLAYER_R, SCENE_MAIN)
+            if not self._overlaps_obstacle(rx, ry, PLAYER_R, SCENE_MAIN):
+                return rx, ry
+        return self.safe_player_spawn()
 
     def _enter_room_scene(self, sid, player, room, now):
         if self._entity_scene(player) != SCENE_MAIN:
@@ -2358,7 +2768,7 @@ class Game:
         player["room_id"] = room.get("id", "")
         player["facility_room_id"] = ""
         player["facility_search"] = 0
-        player["x"], player["y"] = scene.get("spawn", (300, ROOM_H / 2))
+        player["x"], player["y"] = scene.get("spawn", (240, ROOM_H / 2))
         player["vx"] = 0
         player["vy"] = 0
         player["keys"] = {}
@@ -2374,8 +2784,6 @@ class Game:
             "col": "#aee6ff",
             "facility": room.get("effect", ""),
         }, [sid])
-        if room.get("effect") in ("lab", "morgue", "security"):
-            self._spawn_pressure_pack(1 + min(2, self.wave // 3), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
         return True
 
     def _leave_room_scene(self, sid, player, now):
@@ -2419,16 +2827,19 @@ class Game:
         return math.hypot(player["x"] - exit_point.get("x", 0), player["y"] - exit_point.get("y", 0)) <= exit_point.get("radius", ROOM_DOOR_RADIUS) + PLAYER_R
 
     def _make_item_room_for_facility(self):
-        if len(self.items) < MAX_ITEMS:
-            return
-        removable = [
-            iid for iid, item in self.items.items()
-            if not ITEM_TYPES.get(item.get("type"), {}).get("task")
-        ]
-        if removable:
-            self.items.pop(removable[0], None)
+        while len(self.items) >= MAX_ITEMS:
+            removable = next(
+                (
+                    iid for iid, item in self.items.items()
+                    if item.get("type") not in OBJECTIVE_ITEM_TYPES
+                ),
+                None,
+            )
+            if removable is None:
+                return
+            self.items.pop(removable, None)
 
-    def _spawn_item_in_feature(self, feature, item_type, emit=True, scene=SCENE_MAIN):
+    def _spawn_item_in_feature(self, feature, item_type, emit=True, scene=SCENE_MAIN, force=True):
         if not feature:
             return None
         self._make_item_room_for_facility()
@@ -2441,17 +2852,17 @@ class Game:
                 y = random.uniform(loot["y"] + margin, loot["y"] + loot["h"] - margin)
                 if any(circ_rect(x, y, ITEM_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL + 4, scene=scene)):
                     continue
-                return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
-            return self.spawn_item(scene=scene, item_type=item_type, emit=emit)
+                return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene, force=force)
+            return self.spawn_item(scene=scene, item_type=item_type, emit=emit, force=force)
         for _ in range(24):
             x = random.uniform(feature["x"] + margin, feature["x"] + feature["w"] - margin)
             y = random.uniform(feature["y"] + margin, feature["y"] + feature["h"] - margin)
             if any(circ_rect(x, y, ITEM_R + 4, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL + 4, scene=scene)):
                 continue
-            return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
+            return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene, force=force)
         x = feature["x"] + feature["w"] / 2
         y = feature["y"] + feature["h"] / 2
-        return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene)
+        return self.spawn_item(x, y, item_type=item_type, emit=emit, scene=scene, force=force)
 
     def _seed_facility_rewards(self):
         armories = self._rooms_by_effect("armory")
@@ -2497,10 +2908,15 @@ class Game:
         self._emit("mission_revealed", payload)
         return exit_point
 
-    def _facility_notice(self, player, now, text, color="#aee6ff"):
+    def _facility_notice(self, player, now, text, color="#aee6ff", repeat_after=None, notice_key=None):
+        key = f"{self._entity_scene(player)}:{player.get('facility_room_id', '')}:{notice_key or text}"
+        if player.get("facility_notice_key") == key and now < player.get("facility_notice_repeat_at", 0):
+            return
         if now < player.get("facility_notice_cd", 0):
             return
-        player["facility_notice_cd"] = now + 1.25
+        player["facility_notice_key"] = key
+        player["facility_notice_repeat_at"] = now + (repeat_after if repeat_after is not None else 9999)
+        player["facility_notice_cd"] = now + 0.9
         self._emit_to("facility_pulse", {
             "pid": player["id"],
             "text": text,
@@ -2508,29 +2924,85 @@ class Game:
             "y": round(player["y"], 1),
             "col": color,
             "facility": player.get("facility_effect", ""),
+            "noticeKey": notice_key or "",
         }, [player["id"]])
+
+    def _room_state_for_scene(self, room, scene_id):
+        if scene_id and scene_id != SCENE_MAIN:
+            return self.room_scenes.get(scene_id) or room
+        return room
+
+    def _room_zombie_count(self, scene_id):
+        return sum(1 for zombie in self.zombies.values() if self._entity_scene(zombie) == scene_id)
+
+    def _room_pressure_state(self, room, scene_id, effect, now):
+        config = ROOM_PRESSURE_CONFIG.get(effect)
+        if not config:
+            return None, None
+        state = self._room_state_for_scene(room, scene_id)
+        if "pressure_left" not in state:
+            state["pressure_left"] = config["pool"] + min(3, max(0, self.wave - 1) // 2)
+            state["pressure_cooldown"] = now + config.get("initial", 2.5)
+        return state, config
+
+    def _tick_room_pressure(self, room, player, scene_id, effect, now):
+        if scene_id != SCENE_MAIN and not self.room_alarm_spawns_enabled:
+            return 0
+        if self._pending_fog_spawn_count():
+            return 0
+        state, config = self._room_pressure_state(room, scene_id, effect, now)
+        if not state or not config:
+            return 0
+        if state.get("pressure_left", 0) <= 0 or now < state.get("pressure_cooldown", 0):
+            return 0
+        if self._room_zombie_count(scene_id) > ROOM_PRESSURE_QUIET_THRESHOLD:
+            return 0
+        count = min(config["pack"], state.get("pressure_left", 0))
+        spawned = self._spawn_pressure_pack(
+            count,
+            now,
+            urgent=config.get("urgent", False),
+            allow_infection_source=True,
+            origin=player,
+            scene=scene_id,
+        )
+        if spawned:
+            state["pressure_left"] = max(0, state.get("pressure_left", 0) - spawned)
+            state["pressure_cooldown"] = now + config["cooldown"]
+        return spawned
+
+    def _apply_room_hazard(self, sid, player, scene_id, effect, dt, now):
+        dps = ROOM_HAZARD_DPS.get(effect, 0)
+        if dps <= 0 or scene_id == SCENE_MAIN:
+            return 0
+        before = player.get("hp", 0)
+        self._damage_player(
+            sid,
+            dps * dt,
+            now,
+            source=f"room_hazard:{effect}",
+            source_scene=scene_id,
+        )
+        return max(0, before - player.get("hp", before))
 
     def _trigger_lab_reactor(self, sid, player, room, now):
         if now < room.get("next_reactor_at", 0):
             return
         room["next_reactor_at"] = now + 8.5
         self.lab_sample_until = max(self.lab_sample_until, now + 9.0)
-        spawned = self._spawn_pressure_pack(
-            2 + min(3, self.wave // 2),
-            now,
-            urgent=True,
-            allow_infection_source=True,
-            origin=player,
-            scene=self._entity_scene(player),
-        )
+        scene_id = self._entity_scene(player)
+        state, config = self._room_pressure_state(room, scene_id, "lab", now)
+        if state and config:
+            state["pressure_cooldown"] = max(state.get("pressure_cooldown", 0), now + 1.15)
         self._emit_to("lab_reactor", {
             "pid": sid,
-            "text": f"样本库共振：特殊感染体样本掉落提升 9 秒，{spawned} 个感染信号靠近",
+            "text": "样本库共振：特殊感染体样本掉落提升 9 秒，感染信号正在靠近",
             "duration": 9.0,
-            "spawned": spawned,
+            "spawned": 0,
             "x": round(player["x"], 1),
             "y": round(player["y"], 1),
             "col": "#b7ff47",
+            "sceneId": scene_id,
         }, [sid])
 
     def _armory_reward_type(self, player):
@@ -2555,17 +3027,35 @@ class Game:
             scene_features = self.map_features if scene_id == SCENE_MAIN else self._scene_def(scene_id).get("features", [])
             for feature in scene_features:
                 if feature.get("kind") == "pool" and self._feature_contains(feature, player["x"], player["y"], padding=PLAYER_R):
-                    self._damage_player(sid, FACILITY_TOXIC_DAMAGE_PER_SEC * dt, now, source="toxic_pool")
+                    self._damage_player(
+                        sid,
+                        FACILITY_TOXIC_DAMAGE_PER_SEC * dt,
+                        now,
+                        source="toxic_pool",
+                        source_scene=scene_id,
+                    )
                     player["facility_status"] = "污染区"
-                    self._facility_notice(player, now, "地面污染正在灼伤你", "#b7ff47")
+                    self._facility_notice(player, now, "地面污染正在灼伤你", "#b7ff47", repeat_after=4.0)
                     break
             if scene_id == SCENE_MAIN:
                 room = self._room_at(player["x"], player["y"], padding=PLAYER_R * 0.65)
                 if room:
                     if room.get("scene_id"):
-                        self._enter_room_scene(sid, player, room, now)
+                        label = room.get("label", "设施")
+                        room_id = room.get("id", "")
+                        player["facility_label"] = label
+                        player["facility_effect"] = room.get("effect", "")
+                        player["facility_status"] = f"按 F 进入{label}"
+                        if player.get("facility_room_id") != room_id:
+                            player["facility_room_id"] = room_id
+                            player["facility_search"] = 0
+                            self._facility_notice(player, now, f"按 F 进入{label}", "#aee6ff", notice_key="enter_prompt")
+                        if player.pop("interact_requested", False):
+                            self._enter_room_scene(sid, player, room, now)
                         continue
+                player["interact_requested"] = False
             else:
+                player["interact_requested"] = False
                 if self._room_exit_reached(player):
                     self._leave_room_scene(sid, player, now)
                     continue
@@ -2585,30 +3075,60 @@ class Game:
                 player["facility_search"] = 0
                 self._facility_notice(player, now, f"进入{label}", "#aee6ff")
 
+            hazard_suffix = ""
+            if scene_id != SCENE_MAIN:
+                self._tick_room_pressure(room, player, scene_id, effect, now)
+                if effect in ROOM_HAZARD_DPS:
+                    self._apply_room_hazard(sid, player, scene_id, effect, dt, now)
+                    if player.get("dead"):
+                        continue
+                    hazard_suffix = " · 环境伤害"
+
             if effect == "medbay":
-                room["heal_left"] = room.get("heal_left", 38 + min(34, self.wave * 6))
-                if room["heal_left"] <= 0:
-                    player["facility_status"] = "药品耗尽"
-                    self._facility_notice(player, now, "病房药柜已经空了", "#ffb1bd")
+                if room.get("searched"):
+                    player["facility_search"] = 0
+                    medkit_pending = any(
+                        item.get("type") == "medkit" and self._entity_scene(item) == scene_id
+                        for item in self.items.values()
+                    )
+                    player["facility_status"] = ("急救包已掉落" if medkit_pending else "药柜已空") + hazard_suffix
                     continue
-                before = player.get("hp", player.get("max_hp", PLAYER_MAX_HP))
-                heal = min(FACILITY_MED_HEAL_PER_SEC * dt, room["heal_left"])
-                player["hp"] = min(player.get("max_hp", PLAYER_MAX_HP), before + heal)
-                room["heal_left"] = max(0, room["heal_left"] - max(0, player["hp"] - before))
-                left_pct = round(room["heal_left"] / max(1, 38 + min(34, self.wave * 6)) * 100)
-                player["facility_status"] = f"应急止血 {left_pct}%"
-                if player["hp"] > before:
-                    self._facility_notice(player, now, "病房止血中，但声音会引来东西", "#48f0a0")
+                player["facility_search"] = player.get("facility_search", 0) + dt
+                progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 0.78))
+                player["facility_status"] = f"翻找药柜 {round(progress * 100)}%{hazard_suffix}"
+                if entered_room:
+                    self._facility_notice(player, now, "病房药柜可能有急救包，但翻找会弄出声音", "#48f0a0")
+                if progress >= 1:
+                    player["facility_search"] = 0
+                    iid = self._spawn_item_in_feature(room, "medkit", emit=True, scene=scene_id)
+                    if iid is not None:
+                        room["searched"] = True
+                        room["active"] = False
+                        player["facility_status"] = "急救包已掉落" + hazard_suffix
+                        self._emit_to("facility_used", {
+                            "pid": sid,
+                            "facility": "medbay",
+                            "text": "病房找到急救包，血雾被惊醒",
+                            "x": round(player["x"], 1),
+                            "y": round(player["y"], 1),
+                            "col": "#48f0a0",
+                            "item": iid,
+                            "quiet": True,
+                        }, [sid])
                     if not room.get("alarm_spawned"):
                         room["alarm_spawned"] = True
                         self._trigger_fog_wave(now, reason="medbay", force=True, origin=player)
-                    if random.random() < dt * 0.28:
-                        self._spawn_pressure_pack(1 + min(2, self.wave // 3), now, urgent=False, allow_infection_source=True, origin=player, scene=scene_id)
             elif effect == "generator":
-                player["facility_status"] = "可接入电力"
                 if room.get("searched"):
+                    player["facility_search"] = 0
                     player["facility_status"] = "供电已恢复"
                 elif self.task_counts.get("fuse", 0) > 0:
+                    player["facility_search"] = player.get("facility_search", 0) + dt
+                    progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 0.86))
+                    player["facility_status"] = f"接入电力 {round(progress * 100)}%"
+                    if progress < 1:
+                        continue
+                    player["facility_search"] = 0
                     self.task_counts["fuse"] = max(0, self.task_counts.get("fuse", 0) - 1)
                     room["searched"] = True
                     room["active"] = False
@@ -2624,6 +3144,7 @@ class Game:
                         "x": round(player["x"], 1),
                         "y": round(player["y"], 1),
                         "col": "#66d9ff",
+                        "sceneId": scene_id,
                     })
                     self._emit_to("facility_used", {
                         "pid": sid,
@@ -2633,74 +3154,111 @@ class Game:
                         "y": round(player["y"], 1),
                         "col": "#66d9ff",
                     }, [sid])
-                    self._trigger_fog_wave(now, reason="generator", force=True, origin=player)
+                    if not room.get("alarm_spawned"):
+                        room["alarm_spawned"] = True
+                        self._trigger_fog_wave(now, reason="generator", force=True, origin=player)
                 else:
+                    player["facility_search"] = 0
+                    player["facility_status"] = "需要保险丝"
                     self._facility_notice(player, now, "机房需要保险丝才能恢复供电", "#66d9ff")
             elif effect == "lab":
                 if entered_room:
                     self._trigger_lab_reactor(sid, player, room, now)
                 self.lab_sample_until = max(self.lab_sample_until, now + 6.0)
                 left = max(0, self.lab_sample_until - now)
-                player["facility_status"] = f"样本共振 {left:.0f}s"
                 self._facility_notice(player, now, "样本库共振中：击杀特殊感染体更容易掉样本", "#b7ff47")
                 if not room.get("alarm_spawned"):
                     room["alarm_spawned"] = True
                     self._trigger_fog_wave(now, reason="lab", force=True, origin=player)
-                if random.random() < dt * 0.22:
-                    self._spawn_pressure_pack(1 + min(2, self.wave // 4), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                if room.get("searched"):
+                    player["facility_search"] = 0
+                    sample_pending = any(
+                        item.get("type") == "sample" and self._entity_scene(item) == scene_id
+                        for item in self.items.values()
+                    )
+                    player["facility_status"] = ("样本容器已掉落" if sample_pending else "样本柜已空") + hazard_suffix
+                    continue
+                player["facility_search"] = player.get("facility_search", 0) + dt
+                progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 1.05))
+                player["facility_status"] = f"采集样本 {round(progress * 100)}% · 样本共振 {left:.0f}s{hazard_suffix}"
+                if progress >= 1:
+                    player["facility_search"] = 0
+                    iid = self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
+                    if iid is not None:
+                        room["searched"] = True
+                        player["facility_status"] = "样本容器已掉落" + hazard_suffix
+                        self._emit_to("facility_used", {
+                            "pid": sid,
+                            "facility": "lab",
+                            "text": "样本容器掉落，感染读数升高",
+                            "x": round(player["x"], 1),
+                            "y": round(player["y"], 1),
+                            "col": "#b7ff47",
+                            "item": iid,
+                            "quiet": True,
+                        }, [sid])
             elif effect == "archive":
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    player["facility_status"] = "档案已取走"
-                    self._facility_notice(player, now, "档案柜空了，广播还在重复你的名字", "#aee6ff")
+                    lore_pending = any(
+                        item.get("type") == "lore" and self._entity_scene(item) == scene_id
+                        for item in self.items.values()
+                    )
+                    player["facility_status"] = ("档案已掉落" if lore_pending else "档案已取走") + hazard_suffix
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 1.18))
-                player["facility_status"] = f"检索档案 {round(progress * 100)}%"
-                if entered_room:
+                player["facility_status"] = f"检索档案 {round(progress * 100)}%{hazard_suffix}"
+                if entered_room and not room.get("alarm_spawned"):
+                    room["alarm_spawned"] = True
                     self._trigger_fog_wave(now, reason="archive", force=True, origin=player)
                 if player["facility_search"] >= FACILITY_SEARCH_SECONDS * 1.18:
                     player["facility_search"] = 0
-                    room["searched"] = True
-                    room["active"] = False
-                    player["lore"] = player.get("lore", 0) + 1
-                    file_text = CASE_FILES[(player["lore"] - 1) % len(CASE_FILES)]
-                    if random.random() < 0.55:
-                        self._reveal_one_exit(now, source="archive")
-                    self._emit_to("lore_found", {
-                        "pid": sid,
-                        "count": player["lore"],
-                        "text": file_text,
-                        "col": "#aee6ff",
-                    }, [sid])
-                    self._emit_to("facility_used", {
-                        "pid": sid,
-                        "facility": "archive",
-                        "text": "档案室找到黑匣碎片，雾里有东西听见了柜门声",
-                        "x": round(player["x"], 1),
-                        "y": round(player["y"], 1),
-                        "col": "#aee6ff",
-                    }, [sid])
-                    self._spawn_pressure_pack(2 + min(3, self.wave // 2), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                    iid = self._spawn_item_in_feature(room, "lore", emit=True, scene=scene_id)
+                    if iid is None:
+                        iid = self.spawn_item(
+                            player["x"],
+                            player["y"],
+                            item_type="lore",
+                            emit=True,
+                            scene=scene_id,
+                        )
+                    if iid is not None:
+                        room["lore_dropped"] = True
+                        room["searched"] = True
+                        room["active"] = False
+                        player["facility_status"] = "档案已掉落" + hazard_suffix
+                        if random.random() < 0.55:
+                            self._reveal_one_exit(now, source="archive")
+                        if not room.get("alarm_spawned"):
+                            room["alarm_spawned"] = True
+                            self._trigger_fog_wave(now, reason="archive", force=True, origin=player, scene=scene_id)
             elif effect == "security":
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    player["facility_status"] = "安保柜已空"
-                    self._facility_notice(player, now, "安保室已解锁过，警报仍在闪", "#d98cff")
+                    player["facility_status"] = "安保柜已空" + hazard_suffix
                     continue
-                player["facility_status"] = "需要门禁卡"
-                if entered_room:
-                    self._spawn_pressure_pack(2 + min(2, self.wave // 3), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                if entered_room and not room.get("alarm_spawned"):
+                    room["alarm_spawned"] = True
+                    self._trigger_fog_wave(now, reason="security", force=True, origin=player, scene=scene_id)
                 if self.task_counts.get("keycard", 0) <= 0:
+                    player["facility_search"] = 0
+                    player["facility_status"] = "需要门禁卡" + hazard_suffix
                     self._facility_notice(player, now, "安保柜需要门禁卡，附近感染体可能携带", "#d98cff")
                     continue
+                player["facility_search"] = player.get("facility_search", 0) + dt
+                progress = min(1, player["facility_search"] / FACILITY_SEARCH_SECONDS)
+                player["facility_status"] = f"破解安保柜 {round(progress * 100)}%{hazard_suffix}"
+                if progress < 1:
+                    continue
+                player["facility_search"] = 0
                 self.task_counts["keycard"] = max(0, self.task_counts.get("keycard", 0) - 1)
                 room["searched"] = True
                 room["active"] = False
                 reward = "parts" if random.random() < 0.55 else self._armory_reward_type(player)
                 self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
                 revealed = self._reveal_one_exit(now, source="security")
-                player["facility_status"] = "安保柜已开"
+                player["facility_status"] = "安保柜已开" + hazard_suffix
                 self._emit("task_update", {
                     "pid": sid,
                     "type": "keycard",
@@ -2710,6 +3268,7 @@ class Game:
                     "x": round(player["x"], 1),
                     "y": round(player["y"], 1),
                     "col": "#d98cff",
+                    "sceneId": scene_id,
                 })
                 self._emit_to("facility_used", {
                     "pid": sid,
@@ -2719,25 +3278,45 @@ class Game:
                     "y": round(player["y"], 1),
                     "col": "#d98cff",
                 }, [sid])
-                self._trigger_fog_wave(now, reason="security", force=True, origin=player)
+                if not room.get("alarm_spawned"):
+                    room["alarm_spawned"] = True
+                    self._trigger_fog_wave(now, reason="security", force=True, origin=player, scene=scene_id)
             elif effect == "morgue":
-                player["facility_status"] = "尸袋低语"
                 self.lab_sample_until = max(self.lab_sample_until, now + 4.0)
-                self._damage_player(sid, FACILITY_TOXIC_DAMAGE_PER_SEC * 0.42 * dt, now, source="morgue")
+                self._damage_player(
+                    sid,
+                    FACILITY_TOXIC_DAMAGE_PER_SEC * 0.42 * dt,
+                    now,
+                    source="morgue",
+                    source_scene=scene_id,
+                )
+                if player.get("dead"):
+                    continue
+                if room.get("searched"):
+                    player["facility_search"] = 0
+                    sample_pending = any(
+                        item.get("type") == "sample" and self._entity_scene(item) == scene_id
+                        for item in self.items.values()
+                    )
+                    player["facility_status"] = ("样本已掉落" if sample_pending else "尸袋已翻空") + hazard_suffix
+                    continue
                 if entered_room:
                     self._facility_notice(player, now, "停尸间提高样本掉落，但尸袋开始动了", "#b7ff47")
-                    self._spawn_pressure_pack(3 + min(3, self.wave // 2), now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
-                    if random.random() < 0.72:
-                        self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
-                elif random.random() < dt * 0.18:
-                    self._spawn_pressure_pack(1, now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
+                    self._trigger_fog_wave(now, reason="morgue", force=True, origin=player, scene=scene_id)
+                player["facility_search"] = player.get("facility_search", 0) + dt
+                progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 0.92))
+                player["facility_status"] = f"翻检尸袋 {round(progress * 100)}%{hazard_suffix}"
+                if progress >= 1:
+                    player["facility_search"] = 0
+                    iid = self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
+                    if iid is not None:
+                        room["searched"] = True
+                        room["active"] = False
+                        player["facility_status"] = "样本已掉落" + hazard_suffix
             elif effect == "armory":
                 if room.get("searched"):
                     player["facility_search"] = 0
                     player["facility_status"] = "柜门已空"
-                    self._facility_notice(player, now, "仓库已经搜空，别在这里久留", "#ffc247")
-                    if random.random() < dt * 0.08:
-                        self._spawn_pressure_pack(1, now, urgent=True, allow_infection_source=True, origin=player, scene=scene_id)
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / FACILITY_SEARCH_SECONDS)
@@ -2746,6 +3325,16 @@ class Game:
                     player["facility_search"] = 0
                     reward = room.pop("pending_reward", None) or self._armory_reward_type(player)
                     iid = self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
+                    ammo_reward = {
+                        "weapon_rifle": "ammo_rifle",
+                        "weapon_shotgun": "ammo_shell",
+                        "weapon_smg": "ammo_smg",
+                        "weapon_launcher": "ammo_explosive",
+                    }.get(reward)
+                    if ammo_reward:
+                        self._spawn_item_in_feature(room, ammo_reward, emit=True, scene=scene_id)
+                    elif reward not in ("ammo", "ammo_pistol", "ammo_rifle", "ammo_smg", "ammo_shell", "ammo_explosive"):
+                        self._spawn_item_in_feature(room, "ammo", emit=True, scene=scene_id)
                     room["searched"] = True
                     room["active"] = False
                     meta = ITEM_TYPES.get(reward, {})
@@ -2757,6 +3346,7 @@ class Game:
                         "y": round(player["y"], 1),
                         "col": meta.get("color", "#ffc247"),
                         "item": iid,
+                        "quiet": True,
                     }, [sid])
                     self._trigger_fog_wave(now, reason="armory", force=True, origin=player)
 
@@ -3034,7 +3624,7 @@ class Game:
                 "prev_x": muzzle_x,
                 "prev_y": muzzle_y,
                 "born_tick": self.tick_id,
-                "shot_seq": player.get("ack_seq", 0),
+                "shot_seq": player.get("input_seq", player.get("ack_seq", 0)),
                 "vx": math.cos(angle) * speed,
                 "vy": math.sin(angle) * speed,
                 "radius": meta.get("bullet_radius", BULLET_R),
@@ -3154,7 +3744,7 @@ class Game:
             "y": round(zombie["y"], 1),
             "col": meta["color"],
             "reason": reason,
-        }, zombie["x"], zombie["y"], include=sid)
+        }, zombie["x"], zombie["y"], include=sid, scene=self._entity_scene(zombie))
         if zombie["type"] == "bloater":
             self._explode_bloater(sid, zid, zombie, now)
         self._try_drop_task_item(zombie, now)
@@ -3176,7 +3766,13 @@ class Game:
             if self._entity_scene(player) != self._entity_scene(zombie):
                 continue
             if math.hypot(player["x"] - x, player["y"] - y) <= BLOATER_RADIUS + PLAYER_R:
-                self._damage_player(psid, BLOATER_PLAYER_DAMAGE, now, source=f"bloater:{zid}")
+                self._damage_player(
+                    psid,
+                    BLOATER_PLAYER_DAMAGE,
+                    now,
+                    source=f"bloater:{zid}",
+                    source_scene=self._entity_scene(zombie),
+                )
 
         for other_id, other in list(self.zombies.items()):
             if other_id not in self.zombies:
@@ -3190,9 +3786,11 @@ class Game:
             if other["hp"] <= 0:
                 self._kill_zombie(sid, other_id, other, now, reason="blast")
 
-    def _damage_player(self, sid, amount, now, source=None):
+    def _damage_player(self, sid, amount, now, source=None, source_scene=None):
         player = self.players.get(sid)
         if not player or player.get("dead") or self._player_protected(player, now):
+            return
+        if source_scene is not None and self._entity_scene(player) != source_scene:
             return
         player["hp"] -= amount
         if player["hp"] <= 0:
@@ -3260,6 +3858,7 @@ class Game:
                 player["vx"] = 0
                 player["vy"] = 0
                 player["fire_requested"] = False
+                player["ack_seq"] = max(player.get("ack_seq", 0), player.get("input_seq", 0))
                 continue
             if player.get("paused"):
                 player["keys"] = {}
@@ -3267,6 +3866,7 @@ class Game:
                 player["fire_requested"] = False
                 player["vx"] = 0
                 player["vy"] = 0
+                player["ack_seq"] = max(player.get("ack_seq", 0), player.get("input_seq", 0))
                 continue
             self._finish_reload(player, now)
 
@@ -3296,6 +3896,7 @@ class Game:
                 if zombie_grid is None:
                     zombie_grid = self._build_grid(self.zombies)
                 self._try_shoot(sid, player, now, force=force_fire, zombie_grid=zombie_grid)
+            player["ack_seq"] = max(player.get("ack_seq", 0), player.get("input_seq", 0))
 
     def _zombie_target(self, zombie, alive, now):
         candidates = []
@@ -3410,25 +4011,6 @@ class Game:
         }, zombie["x"], zombie["y"], scene=self._entity_scene(zombie))
         return speed * LEAPER_SPEED_MULT
 
-    def _maybe_spit(self, zid, zombie, target, dist, now):
-        if zombie["type"] != "spitter":
-            return
-        if dist < 150 or dist > 560 or now < zombie.get("spit_cd", 0):
-            return
-        if self._segment_blocked(zombie["x"], zombie["y"], target["x"], target["y"], radius=4, scene=self._entity_scene(zombie)):
-            return
-        zombie["spit_cd"] = now + 2.4 + random.random() * 0.8
-        self._damage_player(target["id"], 14 + min(8, self.wave), now, source=f"spitter:{zid}")
-        self._emit_near("z_spit", {
-            "zid": zid,
-            "pid": target["id"],
-            "x": round(zombie["x"], 1),
-            "y": round(zombie["y"], 1),
-            "tx": round(target["x"], 1),
-            "ty": round(target["y"], 1),
-            "col": ZOMBIE_TYPES["spitter"]["color"],
-        }, zombie["x"], zombie["y"], scene=self._entity_scene(zombie))
-
     def _maybe_boss_phase(self, zid, zombie, now):
         if zombie["type"] != "boss":
             return
@@ -3452,7 +4034,7 @@ class Game:
             if self.wave < ZOMBIE_TYPES[ztype].get("unlock", 1):
                 ztype = "runner"
             x, y = self.safe_fog_spawn(origin=zombie, scene=scene)
-            new_id = self.spawn_zombie(x=x, y=y, ztype=ztype, pressure=True, scene=scene)
+            new_id = self.spawn_zombie(x=x, y=y, ztype=ztype, emit=False, pressure=True, scene=scene)
             if not new_id:
                 continue
             spawned += 1
@@ -3490,7 +4072,13 @@ class Game:
             pd = math.hypot(player["x"] - zombie["x"], player["y"] - zombie["y"])
             if pd <= radius + PLAYER_R:
                 hit += 1
-                self._damage_player(sid, 18 + phase * 8 + min(8, self.wave), now, source=f"boss_slam:{zid}")
+                self._damage_player(
+                    sid,
+                    18 + phase * 8 + min(8, self.wave),
+                    now,
+                    source=f"boss_slam:{zid}",
+                    source_scene=scene,
+                )
                 dx = player["x"] - zombie["x"]
                 dy = player["y"] - zombie["y"]
                 mag = math.hypot(dx, dy) or 1
@@ -3556,12 +4144,15 @@ class Game:
                 }, [sid])
                 affected += 1
             reward["amount"] = 1
+            # Archive-route evacuation is a deliberate per-extraction scare, separate from room entry alarms.
             self._trigger_fog_wave(now, reason="archive", force=True)
         reward["affected"] = affected
         return reward
 
     def _begin_intermission(self, now, exit_point, players_in_zone, route_reward):
         self.bullets.clear()
+        self.pending_fog_spawns.clear()
+        self.fog_active_until = 0.0
         ending = self._is_final_wave(self.wave)
         for player in self.players.values():
             player["keys"] = {}
@@ -3650,6 +4241,7 @@ class Game:
             "name": exit_point["name"],
             "x": round(exit_point["x"], 1),
             "y": round(exit_point["y"], 1),
+            "sceneId": SCENE_MAIN,
         })
         self.wave += 1
         self.wave_remaining = self._wave_budget()
@@ -3658,6 +4250,7 @@ class Game:
         self.wave_announced = True
         self.next_fog_wave_at = now + 5.0
         self.fog_active_until = 0.0
+        self.pending_fog_spawns.clear()
         self.zombies.clear()
         self.bullets.clear()
         self.items.clear()
@@ -3686,14 +4279,14 @@ class Game:
             player["lives"] = player.get("max_lives", PLAYER_STAGE_LIVES)
             player["hp"] = min(player["max_hp"], max(player.get("hp", player["max_hp"]), player["max_hp"] * 0.72))
             player["protect_until"] = now + PROTECT
-            self._emit("p_resp", {
+            self._emit_near("p_resp", {
                 "pid": sid,
                 "x": sx,
                 "y": sy,
                 "hp": round(player["hp"], 1),
                 "lives": player.get("lives", PLAYER_STAGE_LIVES),
                 "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
-            })
+            }, sx, sy, include=sid, scene=SCENE_MAIN)
         stage_zombies = min(INITIAL_ZOMBIES + self.wave * 5, self.wave_remaining)
         for _ in range(stage_zombies):
             if self.spawn_zombie(emit=False, pressure=True):
@@ -3717,6 +4310,7 @@ class Game:
             "story": self._story_for_wave(),
             "stage": self.stage_director,
             "routeReward": route_reward,
+            "sceneId": SCENE_MAIN,
         })
 
     def _complete_mission(self, now, exit_point, players_in_zone):
@@ -3742,6 +4336,8 @@ class Game:
                     "x": round(player["x"], 1),
                     "y": round(player["y"], 1),
                     "col": player["color"],
+                    "sceneId": self._entity_scene(player),
+                    "_targets": [sid],
                 })
             file_text = CASE_FILES[(player["lore"] - 1) % len(CASE_FILES)]
             self._emit_to("lore_found", {
@@ -3754,6 +4350,7 @@ class Game:
             "name": exit_point["name"],
             "x": round(exit_point["x"], 1),
             "y": round(exit_point["y"], 1),
+            "sceneId": SCENE_MAIN,
             "players": len(players_in_zone),
             "wave": self.wave,
             "nextWave": self.wave + 1,
@@ -3819,6 +4416,7 @@ class Game:
                     "x": round(exit_point["x"], 1),
                     "y": round(exit_point["y"], 1),
                     "col": exit_point["color"],
+                    "sceneId": SCENE_MAIN,
                 })
 
             players_in_zone = [
@@ -3862,7 +4460,6 @@ class Game:
             dx = target["x"] - zombie["x"]
             dy = target["y"] - zombie["y"]
             dist_to_target = math.hypot(dx, dy)
-            self._maybe_spit(zid, zombie, target, dist_to_target, now)
             self._maybe_boss_phase(zid, zombie, now)
             self._maybe_boss_slam(zid, zombie, target, dist_to_target, now)
             if zombie["type"] == "boss":
@@ -3879,9 +4476,17 @@ class Game:
             dist_after = math.hypot(target["x"] - zombie["x"], target["y"] - zombie["y"])
             if dist_after <= zombie["radius"] + target["radius"] + 8:
                 meta = ZOMBIE_TYPES.get(zombie["type"], ZOMBIE_TYPES["walker"])
-                self._damage_player(target["id"], meta["damage"] * dt, now, zid)
+                self._damage_player(
+                    target["id"],
+                    meta["damage"] * dt,
+                    now,
+                    zid,
+                    source_scene=self._entity_scene(zombie),
+                )
 
     def _director_pressure(self, dt, now):
+        if self._pending_fog_spawn_count():
+            return
         self.director_timer += dt
         if self.director_timer < DIRECTOR_CHECK_DT:
             return
@@ -3926,7 +4531,6 @@ class Game:
             zombie["path_time"] = 0
             zombie["path_idx"] = 1
             relocated += 1
-            self._emit_near("z_spawn", self._zombie_event(zid, zombie), x, y)
             if relocated >= DIRECTOR_MAX_PRESSURE_SPAWNS:
                 break
 
@@ -3954,7 +4558,7 @@ class Game:
             MAX_ZOMBIES - len(self.zombies),
         )
         for _ in range(max(0, budget)):
-            if self.spawn_zombie(pressure=True):
+            if self.spawn_zombie(emit=False, pressure=True):
                 self.wave_remaining -= 1
 
     def _spawn_wave_burst(self):
@@ -3989,7 +4593,7 @@ class Game:
                     candidate, unlock = scripted[slot]
                     if self.wave >= unlock:
                         ztype = candidate
-            zid = self.spawn_zombie(ztype=ztype, pressure=True)
+            zid = self.spawn_zombie(ztype=ztype, emit=False, pressure=True)
             if zid:
                 self.wave_remaining -= 1
                 if ztype == "boss":
@@ -4003,6 +4607,7 @@ class Game:
                         "hp": zombie["hp"],
                         "maxHp": zombie["max_hp"],
                         "color": zombie["color"],
+                        "sceneId": SCENE_MAIN,
                     })
 
     def _reward_wave_clear(self, now, cleared_wave):
@@ -4028,11 +4633,18 @@ class Game:
     def _maintain_zombies(self, dt, now):
         if self.wave_remaining <= 0 or len(self.zombies) >= MAX_ZOMBIES:
             return
+        if self._pending_fog_spawn_count():
+            return
         self.zombie_spawn_timer += dt
         if self.zombie_spawn_timer < ZOMBIE_SPAWN_DT:
             return
         self.zombie_spawn_timer = 0.0
-        alive_count = max(1, sum(1 for player in self.players.values() if not player.get("dead") and self._entity_scene(player) == SCENE_MAIN))
+        alive_count = sum(
+            1 for player in self.players.values()
+            if not player.get("dead") and not player.get("paused") and self._entity_scene(player) == SCENE_MAIN
+        )
+        if alive_count <= 0:
+            return
         main_zombies = sum(1 for zombie in self.zombies.values() if self._entity_scene(zombie) == SCENE_MAIN)
         target_near = min(DIRECTOR_MAX_NEAR_ZOMBIES, DIRECTOR_MIN_NEAR_ZOMBIES + alive_count * 5 + self.wave * 2)
         budget = min(
@@ -4042,7 +4654,7 @@ class Game:
             MAX_ZOMBIES - len(self.zombies),
         )
         for _ in range(max(0, budget)):
-            if self.spawn_zombie(pressure=True):
+            if self.spawn_zombie(emit=False, pressure=True):
                 self.wave_remaining -= 1
 
     def _maintain_items(self, dt):
@@ -4064,8 +4676,9 @@ class Game:
     def _remove_stale_players(self, now):
         for sid, player in list(self.players.items()):
             if now - player.get("last_seen", player.get("last_input", now)) > PLAYER_STALE_TIMEOUT:
+                scene_id = self._entity_scene(player)
                 self.remove_player(sid)
-                self._emit("p_leave", {"pid": sid, "reason": "timeout"})
+                self._emit("p_leave", {"pid": sid, "reason": "timeout", "sceneId": scene_id})
 
     def _grant_emergency_ammo(self, player):
         if player.get("ammo", 0) + self._ammo_reserve(player) > 0:
@@ -4090,18 +4703,21 @@ class Game:
         player["protect_until"] = now + PROTECT
         self._grant_emergency_ammo(player)
         self._sync_weapon_fields(player)
-        self._emit("p_resp", {
+        self._emit_near("p_resp", {
             "pid": pid,
             "x": sx,
             "y": sy,
             "hp": player["hp"],
             "lives": player.get("lives", PLAYER_STAGE_LIVES),
             "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
-        })
+        }, sx, sy, include=pid, scene=SCENE_MAIN)
         if old_scene != SCENE_MAIN:
             self._emit_scene_change(pid, reason="respawn")
+            self._sweep_empty_room_scene(old_scene)
 
     def _restart_current_stage(self, now, reason="wipe"):
+        if reason not in STAGE_FAILURE_REASONS:
+            raise ValueError(f"unsupported stage failure reason: {reason}")
         self.intermission = None
         self.zombies.clear()
         self.bullets.clear()
@@ -4111,6 +4727,7 @@ class Game:
         self.wave_kills = 0
         self.next_fog_wave_at = now + 5.0
         self.fog_active_until = 0.0
+        self.pending_fog_spawns.clear()
         self._gen_obstacles()
         self._start_stage_tasks()
         for pid, player in self.players.items():
@@ -4132,6 +4749,7 @@ class Game:
             "wave": self.wave,
             "reason": reason,
             "lives": PLAYER_STAGE_LIVES,
+            "sceneId": SCENE_MAIN,
         })
         self._emit("wave_start", {
             **scene_payload,
@@ -4140,9 +4758,12 @@ class Game:
             "boss": self._is_boss_wave(),
             "story": self._story_for_wave(),
             "stage": self.stage_director,
+            "sceneId": SCENE_MAIN,
         })
 
     def restart_current_stage(self, sid=None, reason="abandon"):
+        if reason not in STAGE_FAILURE_REASONS:
+            raise ValueError(f"unsupported stage failure reason: {reason}")
         if not self.running or not self.players:
             return False
         if sid and sid not in self.players:
@@ -4174,6 +4795,7 @@ class Game:
                     player["shooting"] = False
                     player["vx"] = 0
                     player["vy"] = 0
+                    player["ack_seq"] = max(player.get("ack_seq", 0), player.get("input_seq", 0))
                     player["protect_until"] = max(player.get("protect_until", 0), now + 3.0)
                 return
             self._maintain_zombies(dt, now)
@@ -4184,6 +4806,7 @@ class Game:
             self._apply_facility_effects(dt, now)
             self._update_mission(dt, now)
             self._update_zombies(dt, now)
+            self._process_pending_fog_spawns(now)
             self._update_bullets(dt, now)
             self._collect_items(now)
 
@@ -4264,6 +4887,9 @@ class Game:
             "facility_status": "",
             "facility_search": 0.0,
             "facility_notice_cd": 0,
+            "facility_notice_key": "",
+            "facility_notice_repeat_at": 0.0,
+            "interact_requested": False,
             "dash_cd": 0,
             "level": 1,
             "xp": 0,
@@ -4280,6 +4906,45 @@ class Game:
         }
         return idx, sx, sy
 
+    def claim_single_player(self, sid):
+        if sid in self.players:
+            idx, sx, sy = self.add_player(sid)
+            return idx, sx, sy, None
+        if not self.players:
+            idx, sx, sy = self.add_player(sid)
+            return idx, sx, sy, None
+
+        old_sid = next(iter(self.players))
+        player = self.players.pop(old_sid)
+        now = self._now()
+        player["id"] = sid
+        player["last_input"] = now
+        player["last_seen"] = now
+        player["input_seq"] = 0
+        player["ack_seq"] = 0
+        player["keys"] = {}
+        player["shooting"] = False
+        player["fire_requested"] = False
+        player["interact_requested"] = False
+        player["paused"] = False
+        player["vx"] = 0
+        player["vy"] = 0
+        self.players[sid] = player
+
+        for bullet in self.bullets.values():
+            if bullet.get("owner") == old_sid:
+                bullet["owner"] = sid
+        if self.intermission:
+            self.intermission["players"] = [
+                sid if pid == old_sid else pid
+                for pid in self.intermission.get("players", [])
+            ]
+            self.intermission["ready"] = [
+                sid if pid == old_sid else pid
+                for pid in self.intermission.get("ready", [])
+            ]
+        return player["idx"], player["x"], player["y"], old_sid
+
     def remove_player(self, sid):
         removed = sid in self.players
         if removed:
@@ -4295,6 +4960,7 @@ class Game:
                 else:
                     self._try_advance_intermission(self._now())
         if not self.players:
+            self.pending_fog_spawns.clear()
             self.running = False
         return removed
 
@@ -4307,19 +4973,32 @@ class Game:
             return
         now = self._now()
         player["input_seq"] = inp["seq"]
-        player["ack_seq"] = inp["seq"]
         player["keys"] = inp["keys"]
         player["aim_angle"] = inp["aim_angle"]
         if inp.get("aim_target"):
             player["aim_x"], player["aim_y"] = inp["aim_target"]
             self._refresh_player_aim(player)
         player["paused"] = inp.get("paused", False)
+        player["interact_requested"] = bool(inp.get("interact"))
         if self.intermission:
             player["keys"] = {}
             player["shooting"] = False
             player["fire_requested"] = False
+            player["interact_requested"] = False
             player["vx"] = 0
             player["vy"] = 0
+            player["ack_seq"] = player.get("input_seq", player.get("ack_seq", 0))
+            player["last_input"] = now
+            player["last_seen"] = now
+            return
+        if player.get("dead"):
+            player["keys"] = {}
+            player["shooting"] = False
+            player["fire_requested"] = False
+            player["interact_requested"] = False
+            player["vx"] = 0
+            player["vy"] = 0
+            player["ack_seq"] = player.get("input_seq", player.get("ack_seq", 0))
             player["last_input"] = now
             player["last_seen"] = now
             return
@@ -4327,8 +5006,10 @@ class Game:
             player["keys"] = {}
             player["shooting"] = False
             player["fire_requested"] = False
+            player["interact_requested"] = False
             player["vx"] = 0
             player["vy"] = 0
+            player["ack_seq"] = player.get("input_seq", player.get("ack_seq", 0))
             player["last_input"] = now
             player["last_seen"] = now
             return
@@ -4506,11 +5187,18 @@ class Game:
             candidates = candidates[:MAX_SYNC_PLAYERS_PER_CLIENT]
         return {pid: player_tuples[pid] for _, pid in candidates if pid in player_tuples}
 
+    def _dynamic_aoi_radius(self, scene_id):
+        if scene_id == SCENE_MAIN:
+            return DYNAMIC_AOI_RADIUS_MAIN
+        scene = self._scene_def(scene_id)
+        return scene.get("dynamic_aoi_radius", DYNAMIC_AOI_RADIUS_ROOM)
+
     def _limited_zombies_near(self, grid, viewer):
-        radius_sq = ZOMBIE_INTEREST_RADIUS * ZOMBIE_INTEREST_RADIUS
         candidates = []
         scene = self._entity_scene(viewer)
-        for zid, zombie in self._zombies_near(grid, viewer["x"], viewer["y"], ZOMBIE_INTEREST_RADIUS):
+        radius = self._dynamic_aoi_radius(scene)
+        radius_sq = radius * radius
+        for zid, zombie in self._zombies_near(grid, viewer["x"], viewer["y"], radius):
             if self._entity_scene(zombie) != scene:
                 continue
             d2 = (zombie["x"] - viewer["x"]) ** 2 + (zombie["y"] - viewer["y"]) ** 2
@@ -4522,11 +5210,15 @@ class Game:
         return {zid: self._zombie_tuple(zombie) for _, zid, zombie in candidates}
 
     def _limited_bullets_near(self, viewer):
-        radius_sq = BULLET_INTEREST_RADIUS * BULLET_INTEREST_RADIUS
         candidates = []
         scene = self._entity_scene(viewer)
+        radius = self._dynamic_aoi_radius(scene)
+        radius_sq = radius * radius
         for bid, bullet in self.bullets.items():
             if self._entity_scene(bullet) != scene:
+                continue
+            if bullet.get("owner") == viewer.get("id"):
+                candidates.append((0.0, bid, bullet))
                 continue
             d2 = (bullet["x"] - viewer["x"]) ** 2 + (bullet["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
@@ -4537,19 +5229,24 @@ class Game:
         return {bid: self._bullet_tuple(bullet) for _, bid, bullet in candidates}
 
     def _limited_items_near(self, viewer):
-        radius_sq = ITEM_INTEREST_RADIUS * ITEM_INTEREST_RADIUS
         candidates = []
         scene = self._entity_scene(viewer)
+        radius = self._dynamic_aoi_radius(scene)
+        scene_def = self._scene_def(scene)
+        room_objective_radius = math.hypot(scene_def.get("mw", ROOM_W), scene_def.get("mh", ROOM_H))
         for iid, item in self.items.items():
             if self._entity_scene(item) != scene:
                 continue
+            is_objective = item.get("type") in OBJECTIVE_ITEM_TYPES
+            item_radius = room_objective_radius if scene != SCENE_MAIN and is_objective else radius
+            radius_sq = item_radius * item_radius
             d2 = (item["x"] - viewer["x"]) ** 2 + (item["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:
-                candidates.append((d2, iid, item))
+                candidates.append((0 if is_objective else 1, d2, iid, item))
         if len(candidates) > MAX_SYNC_ITEMS_PER_CLIENT:
-            candidates.sort(key=lambda item: item[0])
+            candidates.sort(key=lambda item: (item[0], item[1]))
             candidates = candidates[:MAX_SYNC_ITEMS_PER_CLIENT]
-        return {iid: self._item_tuple(item) for _, iid, item in candidates}
+        return {iid: self._item_tuple(item) for _, _, iid, item in candidates}
 
     def _leaderboard(self):
         rows = sorted(
@@ -4591,6 +5288,7 @@ class Game:
             "sceneName": scene_def.get("name", "设施楼层"),
             "mw": scene_def.get("mw", MAP_W),
             "mh": scene_def.get("mh", MAP_H),
+            "dynamicAoi": self._dynamic_aoi_radius(scene_def.get("id", SCENE_MAIN)),
             "p": players,
             "z": zombies,
             "b": bullets,
@@ -4620,6 +5318,7 @@ class Game:
             self._leaderboard(),
         )
         self._record_snapshot_perf(perf_start)
+        self._record_payload_perf([snap])
         snap["perf"] = self._perf_snapshot()
         return snap
 
@@ -4634,6 +5333,7 @@ class Game:
             snap = self._snapshot_payload(pid, now, player_tuples, grid, leaderboard)
             packets.append((pid, snap))
         self._record_snapshot_perf(perf_start)
+        self._record_payload_perf([snap for _, snap in packets])
         perf = self._perf_snapshot()
         for _, snap in packets:
             snap["perf"] = perf
@@ -4674,28 +5374,20 @@ class Game:
                 "vehicleSpeedMult": VEHICLE_SPEED_MULT,
                 "moveAccel": MOVE_ACCEL,
                 "moveDecel": MOVE_DECEL,
+                "moveCollisionStep": MOVE_COLLISION_STEP,
+                "dynamicAoiMain": DYNAMIC_AOI_RADIUS_MAIN,
+                "dynamicAoiRoom": DYNAMIC_AOI_RADIUS_ROOM,
                 "serverTickHz": SERVER_TICK_HZ,
                 "snapshotHz": SNAPSHOT_HZ,
             },
             "mw": scene_def.get("mw", MAP_W),
             "mh": scene_def.get("mh", MAP_H),
+            "dynamicAoi": self._dynamic_aoi_radius(scene_def.get("id", SCENE_MAIN)),
             "obs": self.obstacles if scene_is_main else scene_def.get("obs", []),
             "features": self.map_features if scene_is_main else scene_def.get("features", []),
-            "z": {
-                zid: self._zombie_tuple(zombie)
-                for zid, zombie in self.zombies.items()
-                if self._entity_scene(zombie) == scene_def.get("id", SCENE_MAIN)
-            },
-            "b": {
-                bid: self._bullet_tuple(bullet)
-                for bid, bullet in self.bullets.items()
-                if self._entity_scene(bullet) == scene_def.get("id", SCENE_MAIN)
-            },
-            "i": {
-                iid: self._item_tuple(item)
-                for iid, item in self.items.items()
-                if self._entity_scene(item) == scene_def.get("id", SCENE_MAIN)
-            },
+            "z": self._limited_zombies_near(self._build_grid(self.zombies), player),
+            "b": self._limited_bullets_near(player),
+            "i": self._limited_items_near(player),
             "pl": {
                 pid: self._player_tuple(other, now)
                 for pid, other in self.players.items()
