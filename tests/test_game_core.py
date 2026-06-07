@@ -1,6 +1,7 @@
 import math
 import unittest
 
+import server_game.simulation as simulation_module
 from server_game.config import (
     BLOATER_PLAYER_DAMAGE,
     BLOATER_RADIUS,
@@ -58,7 +59,6 @@ class GameCoreTest(unittest.TestCase):
         game.wave_remaining = 999
         game.zombie_spawn_timer = -999
         game.item_spawn_timer = -999
-        game.room_alarm_spawns_enabled = True
         game.add_player("p1")
         game.running = True
         player = game.players["p1"]
@@ -202,6 +202,14 @@ class GameCoreTest(unittest.TestCase):
         x, y = game.move_col(118, 118, PLAYER_R, 0, 0)
 
         self.assertFalse(game._overlaps_obstacle(x, y, PLAYER_R))
+
+    def test_segment_expanded_rect_intersection_boundaries(self):
+        obstacle = {"x": 100, "y": 100, "w": 60, "h": 50}
+
+        self.assertTrue(Game._segment_hits_expanded_rect(60, 125, 220, 125, obstacle, 4))
+        self.assertFalse(Game._segment_hits_expanded_rect(60, 92, 220, 92, obstacle, 4))
+        self.assertTrue(Game._segment_hits_expanded_rect(60, 96, 220, 96, obstacle, 4))
+        self.assertTrue(Game._segment_hits_expanded_rect(120, 120, 130, 130, obstacle, 4))
 
     def test_shooting_input_spawns_authoritative_bullet(self):
         game, _ = self.make_game()
@@ -520,21 +528,22 @@ class GameCoreTest(unittest.TestCase):
     def test_facility_rooms_apply_gameplay_effects(self):
         game, events = self.make_game()
         now = game._now()
-        player = game.players["p1"]
-        room = {
-            "kind": "room", "id": "medbay-test", "effect": "medbay", "label": "病房",
-            "x": 930, "y": 930, "w": 180, "h": 160, "active": True, "searched": False,
-        }
-        game.map_features = [room]
+        room = next(feature for feature in game.map_features if feature.get("effect") == "medbay")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
+        game.pending_fog_spawns.clear()
+        events.clear()
         player["hp"] = 52
 
-        game._apply_facility_effects(FACILITY_SEARCH_SECONDS, now)
+        game._apply_facility_effects(FACILITY_SEARCH_SECONDS, now + 1.0)
 
         self.assertEqual(player["hp"], 52)
         self.assertEqual(player["facility_label"], "病房")
-        self.assertIn("急救包", player["facility_status"])
-        self.assertTrue(any(item["type"] == "medkit" for item in game.items.values()))
-        self.assertTrue(any(ev == "fog_wave" and data["reason"] == "medbay" for ev, data in events))
+        self.assertIn("医疗物资", player["facility_status"])
+        room_items = [item for item in game.items.values() if item.get("scene") == scene_id]
+        self.assertGreaterEqual(len(room_items), 2)
+        self.assertTrue(any(item["type"] == "medkit" for item in room_items))
+        self.assertTrue(any(ev == "facility_used" and data["facility"] == "medbay" for ev, data in events))
 
     def test_generator_consumes_fuse_and_reveals_exit(self):
         game, events = self.make_game()
@@ -555,19 +564,16 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(game.extractions[0]["visible"])
         self.assertTrue(any(ev == "mission_revealed" for ev, _ in events))
         self.assertTrue(any(ev == "facility_used" for ev, _ in events))
-        self.assertTrue(any(ev == "fog_wave" and data["reason"] == "generator" for ev, data in events))
+        self.assertFalse(any(ev == "fog_wave" and data["reason"] == "generator" for ev, data in events))
 
     def test_lab_entry_triggers_fog_pressure(self):
         game, events = self.make_game()
         now = game._now()
         player = game.players["p1"]
-        room = {
-            "kind": "room", "id": "lab-test", "effect": "lab", "label": "样本库",
-            "x": 930, "y": 930, "w": 180, "h": 160, "active": True, "searched": False,
-        }
-        game.map_features = [room]
+        room = next(feature for feature in game.map_features if feature.get("effect") == "lab")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
 
-        game._apply_facility_effects(SERVER_DT, now)
         game._apply_facility_effects(SERVER_DT, now + SERVER_DT)
 
         self.assertEqual(player["facility_label"], "样本库")
@@ -575,7 +581,7 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(room["alarm_spawned"])
         self.assertIn("样本共振", player["facility_status"])
         self.assertTrue(any(ev == "lab_reactor" for ev, _ in events))
-        self.assertTrue(any(ev == "fog_wave" and data["reason"] == "lab" for ev, data in events))
+        self.assertTrue(any(ev == "fog_wave" and data["reason"] == "lab" and data["sceneId"] == scene_id for ev, data in events))
 
     def test_lab_search_drops_sample_item_without_counting_it(self):
         game, _ = self.make_game()
@@ -584,6 +590,7 @@ class GameCoreTest(unittest.TestCase):
         room = next(feature for feature in game.map_features if feature.get("effect") == "lab")
         player = self.enter_room(game, room, now)
         scene_id = player["scene"]
+        game.pending_fog_spawns.clear()
 
         game._apply_facility_effects(FACILITY_SEARCH_SECONDS * 1.1, now + 1.0)
 
@@ -593,6 +600,10 @@ class GameCoreTest(unittest.TestCase):
         ]
         self.assertTrue(room["searched"])
         self.assertEqual(len(sample_items), 1)
+        self.assertGreaterEqual(
+            len([item for item in game.items.values() if item.get("scene") == scene_id]),
+            2,
+        )
         self.assertEqual(game.task_counts.get("sample", 0), 0)
 
     def test_armory_search_spawns_weapon_reward(self):
@@ -625,6 +636,7 @@ class GameCoreTest(unittest.TestCase):
         player = self.enter_room(game, room, now)
         scene_id = player["scene"]
         game.task_counts["keycard"] = 1
+        game.pending_fog_spawns.clear()
         events.clear()
 
         game._apply_facility_effects(FACILITY_SEARCH_SECONDS + 0.05, now + 1.0)
@@ -649,7 +661,7 @@ class GameCoreTest(unittest.TestCase):
             data for ev, data in events
             if ev == "fog_wave" and data.get("reason") == "security"
         ]
-        self.assertEqual(len(fog_events), 1)
+        self.assertEqual(len(fog_events), 0)
         self.assertTrue(room["alarm_spawned"])
 
     def test_morgue_search_drops_sample_item(self):
@@ -659,6 +671,8 @@ class GameCoreTest(unittest.TestCase):
         room = next(feature for feature in game.map_features if feature.get("effect") == "morgue")
         player = self.enter_room(game, room, now)
         scene_id = player["scene"]
+        game.pending_fog_spawns.clear()
+        player["hp"] = 80
 
         game._apply_facility_effects(FACILITY_SEARCH_SECONDS, now + 1.0)
 
@@ -666,6 +680,8 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(
             any(item["type"] == "sample" and item.get("scene") == scene_id for item in game.items.values())
         )
+        self.assertTrue(any(item.get("scene") == scene_id and item["type"] != "sample" for item in game.items.values()))
+        self.assertLess(player["hp"], 80)
 
     def test_archive_search_drops_lore_item_once_before_counting_lore(self):
         game, events = self.make_game()
@@ -674,6 +690,7 @@ class GameCoreTest(unittest.TestCase):
         room = next(feature for feature in game.map_features if feature.get("effect") == "archive")
         player = self.enter_room(game, room, now)
         scene_id = player["scene"]
+        game.pending_fog_spawns.clear()
         events.clear()
 
         game._apply_facility_effects(FACILITY_SEARCH_SECONDS * 1.18 + 0.05, now + 1.0)
@@ -706,7 +723,7 @@ class GameCoreTest(unittest.TestCase):
             data for ev, data in events
             if ev == "fog_wave" and data.get("reason") == "archive"
         ]
-        self.assertEqual(len(fog_events), 1)
+        self.assertEqual(len(fog_events), 0)
         self.assertTrue(room["alarm_spawned"])
 
     def test_forced_room_rewards_keep_global_item_cap(self):
@@ -733,6 +750,75 @@ class GameCoreTest(unittest.TestCase):
         self.assertEqual(len(game.items), MAX_ITEMS)
         self.assertTrue(any(item.get("type") == "weapon_rifle" for item in game.items.values()))
         self.assertTrue(any(item.get("type") == "ammo_rifle" for item in game.items.values()))
+
+    def test_armory_keeps_pending_reward_if_primary_spawn_fails(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("effect") == "armory")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
+        room["pending_reward"] = "weapon_rifle"
+        original_spawn = game._spawn_item_in_feature
+        calls = []
+
+        def fail_primary(feature, item_type, *args, **kwargs):
+            calls.append(item_type)
+            if len(calls) == 1:
+                return None
+            return original_spawn(feature, item_type, *args, **kwargs)
+
+        game._spawn_item_in_feature = fail_primary
+        spawned = game._spawn_room_rewards(room, "armory", player, scene_id)
+
+        self.assertTrue(spawned)
+        self.assertEqual(room.get("pending_reward"), "weapon_rifle")
+
+        game._spawn_item_in_feature = original_spawn
+        spawned = game._spawn_room_rewards(room, "armory", player, scene_id)
+
+        self.assertTrue(spawned)
+        self.assertNotIn("pending_reward", room)
+
+    def test_armory_persists_unseeded_reward_if_primary_spawn_fails(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("effect") == "armory")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
+        room.pop("pending_reward", None)
+        original_spawn = game._spawn_item_in_feature
+        reward_rolls = []
+        spawn_calls = []
+
+        def roll_reward(current_player):
+            reward_rolls.append(current_player["id"])
+            return "weapon_rifle"
+
+        def fail_primary(feature, item_type, *args, **kwargs):
+            spawn_calls.append(item_type)
+            if len(spawn_calls) == 1:
+                return None
+            return original_spawn(feature, item_type, *args, **kwargs)
+
+        game._armory_reward_type = roll_reward
+        game._spawn_item_in_feature = fail_primary
+
+        game._spawn_room_rewards(room, "armory", player, scene_id)
+
+        self.assertEqual(reward_rolls, ["p1"])
+        self.assertEqual(room.get("pending_reward"), "weapon_rifle")
+
+        def should_not_reroll(current_player):
+            raise AssertionError("pending armory reward should be reused")
+
+        game._armory_reward_type = should_not_reroll
+        game._spawn_item_in_feature = original_spawn
+
+        spawned = game._spawn_room_rewards(room, "armory", player, scene_id)
+
+        self.assertTrue(spawned)
+        self.assertTrue(any(game.items[iid]["type"] == "weapon_rifle" for iid in spawned))
+        self.assertNotIn("pending_reward", room)
 
     def test_lore_pickup_increments_lore_and_emits_story_once(self):
         game, events = self.make_game()
@@ -783,36 +869,6 @@ class GameCoreTest(unittest.TestCase):
         self.assertNotIn(2, snap["i"])
         self.assertLess(snap["perf"]["payload_max_bytes"], 8000)
 
-    def test_room_pressure_pool_is_finite_and_snapshot_synced(self):
-        game, events = self.make_game()
-        now = game._now()
-        room = next(feature for feature in game.map_features if feature.get("effect") == "archive")
-        player = self.enter_room(game, room, now)
-        scene_id = player["scene"]
-        player["facility_room_id"] = room["id"]
-        game.zombies.clear()
-        events.clear()
-        game.wave_remaining = 20
-        scene_state = game.room_scenes[scene_id]
-        scene_state["pressure_left"] = 1
-        scene_state["pressure_cooldown"] = 0
-
-        game._apply_facility_effects(SERVER_DT, now + 2.0)
-
-        room_zombies = [z for z in game.zombies.values() if z.get("scene") == scene_id]
-        self.assertTrue(room_zombies)
-        self.assertEqual(scene_state["pressure_left"], 0)
-        self.assertFalse(any(ev == "z_spawn" for ev, _ in events))
-        spawned_count = len(game.zombies)
-        game.zombies.clear()
-        scene_state["pressure_cooldown"] = 0
-
-        game._apply_facility_effects(SERVER_DT, now + 5.0)
-
-        self.assertEqual(len(game.zombies), 0)
-        self.assertEqual(scene_state["pressure_left"], 0)
-        self.assertLessEqual(spawned_count, 1)
-
     def test_dangerous_room_hazard_damages_only_current_scene_player(self):
         game, _ = self.make_game()
         now = game._now()
@@ -822,6 +878,7 @@ class GameCoreTest(unittest.TestCase):
         player["facility_room_id"] = room["id"]
         player["hp"] = 80
         room["alarm_spawned"] = True
+        game.pending_fog_spawns.clear()
 
         game._apply_facility_effects(1.0, now + 2.0)
 
@@ -930,11 +987,29 @@ class GameCoreTest(unittest.TestCase):
         self.assertIn(near_zid, snap["z"])
         self.assertNotIn(far_zid, snap["z"])
         self.assertNotIn(main_zid, snap["z"])
-        self.assertEqual(snap["zt"], 3)
+        self.assertEqual(snap["zt"], 2)
         self.assertIn(1, snap["b"])
         self.assertNotIn(2, snap["b"])
         self.assertEqual(snap["dynamicAoi"], DYNAMIC_AOI_RADIUS_ROOM)
         self.assertLess(snap["perf"]["payload_max_bytes"], 8000)
+
+    def test_snapshot_zombie_total_is_scoped_to_viewer_scene(self):
+        game, _ = self.make_game()
+        game.zombies.clear()
+        game.add_player("p2")
+        room_scene = next(iter(game.room_scenes))
+        room_player = game.players["p2"]
+        room_player["scene"] = room_scene
+        room_player["x"] = 320
+        room_player["y"] = 560
+
+        for idx in range(2):
+            game.spawn_zombie(x=1000 + idx * 40, y=1000, ztype="runner", scene=SCENE_MAIN)
+        for idx in range(3):
+            game.spawn_zombie(x=360 + idx * 34, y=560, ztype="runner", scene=room_scene)
+
+        self.assertEqual(game.get_snapshot("p1")["zt"], 2)
+        self.assertEqual(game.get_snapshot("p2")["zt"], 3)
 
     def test_dynamic_aoi_radius_uses_main_and_room_values(self):
         game, _ = self.make_game()
@@ -1225,6 +1300,170 @@ class GameCoreTest(unittest.TestCase):
         game._update_zombies(SERVER_DT, now + 261 * SERVER_DT)
 
         self.assertEqual(cache_ids, {key: id(value) for key, value in game.room_nav_cache.items()})
+
+    def test_indoor_zombie_pathfinder_reuses_cached_route_between_repath_ticks(self):
+        game, _ = self.make_game()
+        now = game._now()
+        scene_id = next(iter(game.room_scenes))
+        scene = game.room_scenes[scene_id]
+        bulkhead = next(obstacle for obstacle in scene["obs"] if obstacle.get("kind") == "bulkhead")
+        player = game.players["p1"]
+        player["scene"] = scene_id
+        player["scene_name"] = scene["name"]
+        player["x"] = bulkhead["x"] + bulkhead["w"] + 170
+        player["y"] = bulkhead["y"] + bulkhead["h"] / 2
+        player["protect_until"] = now + 20
+        game.zombies.clear()
+
+        for index in range(8):
+            game.spawn_zombie(
+                x=bulkhead["x"] - 175 - index * 16,
+                y=player["y"] + (index - 3) * 26,
+                ztype="runner",
+                scene=scene_id,
+            )
+
+        original = game._room_visibility_path
+        calls = 0
+
+        def counted_visibility_path(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        game._room_visibility_path = counted_visibility_path
+        for frame in range(30):
+            game._update_zombies(SERVER_DT, now + frame * SERVER_DT)
+
+        self.assertGreater(calls, 0)
+        self.assertLessEqual(calls, 12)
+
+    def test_room_direct_path_invalidates_when_los_becomes_blocked(self):
+        game, _ = self.make_game()
+        now = game._now()
+        scene_id = "room-test-los"
+        scene = {
+            "id": scene_id,
+            "name": "视线测试房",
+            "mw": 1000,
+            "mh": 720,
+            "obs": [],
+            "features": [],
+            "nav_points": [(420, 170), (640, 170), (420, 550), (640, 550)],
+        }
+        game.room_scenes[scene_id] = scene
+        zombie = {"id": 902, "x": 280, "y": 360, "radius": 18, "scene": scene_id}
+        target = {"id": "p1", "x": 760, "y": 360, "radius": PLAYER_R, "scene": scene_id}
+
+        game._room_zombie_waypoint(zombie, target, now)
+
+        self.assertEqual(zombie.get("path_kind"), "room_direct")
+
+        scene["obs"].append({"x": 485, "y": 250, "w": 70, "h": 220, "kind": "bulkhead"})
+        waypoint = game._room_zombie_waypoint(zombie, target, now + SERVER_DT)
+
+        self.assertEqual(zombie.get("path_kind"), "room")
+        self.assertEqual(zombie.get("path_source"), "visibility")
+        self.assertNotEqual((waypoint["x"], waypoint["y"]), (target["x"], target["y"]))
+
+    def test_indoor_zombie_recovers_from_fallback_to_visibility_path(self):
+        game, _ = self.make_game()
+        now = game._now()
+        scene_id = "room-test-recover"
+        game.room_scenes[scene_id] = {
+            "id": scene_id,
+            "name": "恢复测试房",
+            "mw": 1000,
+            "mh": 720,
+            "obs": [{"x": 485, "y": 250, "w": 70, "h": 220, "kind": "bulkhead"}],
+            "features": [],
+            "nav_points": [(420, 170), (640, 170), (420, 550), (640, 550)],
+        }
+        zombie = {"id": 903, "x": 280, "y": 360, "radius": 18, "scene": scene_id}
+        target = {"id": "p1", "x": 760, "y": 360, "radius": PLAYER_R, "scene": scene_id}
+        old_budget = simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK
+        simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = 0
+        try:
+            game._room_zombie_waypoint(zombie, target, now)
+        finally:
+            simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = old_budget
+
+        self.assertEqual(zombie.get("path_source"), "fallback")
+
+        game._room_path_recomputes_this_tick = 0
+        game._room_zombie_waypoint(zombie, target, zombie["path_retry_at"] + SERVER_DT)
+
+        self.assertEqual(zombie.get("path_source"), "visibility")
+
+    def test_indoor_zombie_fallback_moves_when_recompute_budget_is_exhausted(self):
+        game, _ = self.make_game()
+        now = game._now()
+        scene_id = next(iter(game.room_scenes))
+        scene = game.room_scenes[scene_id]
+        bulkhead = next(obstacle for obstacle in scene["obs"] if obstacle.get("kind") == "bulkhead")
+        player = game.players["p1"]
+        player["scene"] = scene_id
+        player["scene_name"] = scene["name"]
+        player["x"] = bulkhead["x"] + bulkhead["w"] + 170
+        player["y"] = bulkhead["y"] + bulkhead["h"] / 2
+        player["protect_until"] = now + 20
+        game.zombies.clear()
+        zid = game.spawn_zombie(
+            x=bulkhead["x"] - 190,
+            y=player["y"],
+            ztype="runner",
+            scene=scene_id,
+        )
+        start = (game.zombies[zid]["x"], game.zombies[zid]["y"])
+        old_budget = simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK
+        simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = 0
+        try:
+            game._update_zombies(SERVER_DT, now)
+        finally:
+            simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = old_budget
+
+        zombie = game.zombies[zid]
+        self.assertEqual(zombie.get("path_source"), "fallback")
+        self.assertGreater(math.hypot(zombie["x"] - start[0], zombie["y"] - start[1]), 0.1)
+
+    def test_indoor_zombie_waits_when_no_safe_room_route_exists(self):
+        game, _ = self.make_game()
+        now = game._now()
+        scene_id = "room-test-blocked"
+        wall = {"x": 500, "y": 0, "w": 90, "h": 900, "kind": "bulkhead"}
+        game.room_scenes[scene_id] = {
+            "id": scene_id,
+            "name": "封闭测试房",
+            "mw": 1000,
+            "mh": 900,
+            "obs": [wall],
+            "features": [],
+            "nav_points": [],
+        }
+        zombie = {
+            "id": 901,
+            "x": 330,
+            "y": 450,
+            "radius": 18,
+            "scene": scene_id,
+        }
+        target = {
+            "id": "p1",
+            "x": 760,
+            "y": 450,
+            "radius": PLAYER_R,
+            "scene": scene_id,
+        }
+        old_budget = simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK
+        simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = 0
+        try:
+            waypoint = game._room_zombie_waypoint(zombie, target, now)
+        finally:
+            simulation_module.ROOM_PATH_RECOMPUTES_PER_TICK = old_budget
+
+        self.assertEqual(zombie.get("path_source"), "blocked")
+        self.assertAlmostEqual(waypoint["x"], zombie["x"])
+        self.assertAlmostEqual(waypoint["y"], zombie["y"])
 
     def test_room_nav_cache_can_invalidate_one_scene(self):
         game, _ = self.make_game()
@@ -2159,6 +2398,19 @@ class GameCoreTest(unittest.TestCase):
             game._process_pending_fog_spawns(now)
         self.assertTrue(any(zombie.get("source") == "infection" for zombie in game.zombies.values()))
 
+    def test_main_fog_wave_still_consumes_global_wave_budget(self):
+        game, _ = self.make_game()
+        now = game._now()
+        game.zombies.clear()
+        game.wave_remaining = 20
+        game.infection_source_remaining = 0
+
+        queued = game._trigger_fog_wave(now, reason="silence", force=True)
+
+        self.assertGreater(queued, 0)
+        self.assertEqual(game.wave_remaining, 20 - queued)
+        self.assertTrue(all(entry.get("source") == "wave" for entry in game.pending_fog_spawns))
+
     def test_fog_wave_does_not_emit_per_zombie_spawn_burst(self):
         game, events = self.make_game()
         now = game._now()
@@ -2202,6 +2454,7 @@ class GameCoreTest(unittest.TestCase):
         game.zombies.clear()
         game.wave_remaining = 80
         game.infection_source_remaining = 40
+        game.pending_fog_spawns.clear()
         events.clear()
 
         queued = game._trigger_fog_wave(now + 1.0, reason="lab", force=True, origin=player)
@@ -2216,23 +2469,41 @@ class GameCoreTest(unittest.TestCase):
         self.assertEqual(len(game.zombies), ROOM_FOG_SPAWNS_PER_TICK)
         self.assertEqual(game._pending_fog_spawn_count(), queued - ROOM_FOG_SPAWNS_PER_TICK)
 
-    def test_room_alarm_spawns_can_be_disabled_for_perf_probe(self):
+    def test_room_entry_wave_is_independent_from_global_budget(self):
         game, events = self.make_game()
         now = game._now()
         room = next(feature for feature in game.map_features if feature.get("effect") == "armory")
-        player = self.enter_room(game, room, now)
-        game.room_alarm_spawns_enabled = False
         game.zombies.clear()
         game.pending_fog_spawns.clear()
+        game.wave_remaining = 0
+        game.infection_source_remaining = 0
         events.clear()
 
-        queued = game._trigger_fog_wave(now + 1.0, reason="armory", force=True, origin=player)
-        game._tick_room_pressure(room, player, player["scene"], "armory", now + 10)
+        player = self.enter_room(game, room, now)
+        queued = game._pending_fog_spawn_count()
 
-        self.assertEqual(queued, 0)
-        self.assertEqual(game._pending_fog_spawn_count(), 0)
+        self.assertGreater(queued, 0)
+        self.assertEqual(game.wave_remaining, 0)
+        self.assertEqual(game.infection_source_remaining, 0)
         self.assertEqual(len(game.zombies), 0)
-        self.assertFalse(any(ev == "fog_wave" for ev, _ in events))
+        self.assertTrue(any(ev == "fog_wave" and data["sceneId"] == player["scene"] for ev, data in events))
+        while game._pending_fog_spawn_count():
+            game._process_pending_fog_spawns(now + 1.0)
+        self.assertTrue(any(zombie.get("source") == "room" for zombie in game.zombies.values()))
+
+    def test_room_entry_wave_resets_when_stage_map_is_regenerated(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("effect") == "lab")
+        player = self.enter_room(game, room, now)
+        old_scene_id = player["scene"]
+
+        self.assertTrue(game.room_scenes[old_scene_id].get("entry_wave_spawned"))
+
+        game._gen_obstacles()
+
+        self.assertTrue(game.room_scenes)
+        self.assertFalse(any(scene.get("entry_wave_spawned") for scene in game.room_scenes.values()))
 
     def test_indoor_fog_wave_does_not_advance_main_fog_timers(self):
         game, _ = self.make_game()
@@ -2242,6 +2513,7 @@ class GameCoreTest(unittest.TestCase):
         game.zombies.clear()
         game.wave_remaining = 80
         game.infection_source_remaining = 40
+        game.pending_fog_spawns.clear()
         game.next_fog_wave_at = now + 123
         game.fog_active_until = now + 77
 
@@ -2341,21 +2613,22 @@ class GameCoreTest(unittest.TestCase):
         self.assertEqual(player["scene"], scene_id)
         self.assertEqual([entry.get("scene") for entry in game.pending_fog_spawns], [SCENE_MAIN])
 
-    def test_entering_danger_room_does_not_spawn_immediate_pack(self):
+    def test_entering_danger_room_queues_one_independent_wave(self):
         game, events = self.make_game()
         now = game._now()
         room = next(feature for feature in game.map_features if feature.get("effect") == "lab")
         player = self.enter_room(game, room, now)
 
         self.assertEqual(len(game.zombies), 0)
-        self.assertEqual(game._pending_fog_spawn_count(), 0)
+        self.assertGreater(game._pending_fog_spawn_count(), 0)
+        first_queue = game._pending_fog_spawn_count()
+        self.assertTrue(any(ev == "fog_wave" and data["sceneId"] == player["scene"] for ev, data in events))
 
         game._apply_facility_effects(SERVER_DT, now + SERVER_DT)
 
         self.assertEqual(len(game.zombies), 0)
-        self.assertGreater(game._pending_fog_spawn_count(), 0)
+        self.assertEqual(game._pending_fog_spawn_count(), first_queue)
         self.assertTrue(any(ev == "lab_reactor" for ev, _ in events))
-        self.assertTrue(any(ev == "fog_wave" and data["sceneId"] == player["scene"] for ev, data in events))
 
     def test_indoor_fog_spawns_rotate_room_entry_points(self):
         game, _ = self.make_game()
@@ -2367,6 +2640,7 @@ class GameCoreTest(unittest.TestCase):
         game.zombies.clear()
         game.wave_remaining = 80
         game.infection_source_remaining = 40
+        game.pending_fog_spawns.clear()
 
         queued = game._trigger_fog_wave(now + 1.0, reason="lab", force=True, origin=player)
         while game._pending_fog_spawn_count():
@@ -2379,6 +2653,20 @@ class GameCoreTest(unittest.TestCase):
         for zombie, point in zip(spawned[:3], expected_points):
             self.assertLess(math.hypot(zombie["x"] - point[0], zombie["y"] - point[1]), 120)
             self.assertGreaterEqual(math.hypot(zombie["x"] - player["x"], zombie["y"] - player["y"]), 240)
+
+    def test_room_pending_fog_spawn_prewarms_nav_before_movement(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("effect") == "lab")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
+        game.room_nav_cache.clear()
+        self.assertGreater(game._pending_fog_spawn_count(), 0)
+
+        game._process_pending_fog_spawns(now + SERVER_DT)
+
+        self.assertTrue(any(key[0] == scene_id for key in game.room_nav_cache))
+        self.assertTrue(any(zombie.get("scene") == scene_id for zombie in game.zombies.values()))
 
     def test_pending_fog_spawns_clear_with_empty_room_scene(self):
         game, _ = self.make_game()

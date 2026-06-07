@@ -45,7 +45,6 @@ from .config import (
     ROOM_FOG_WAVE_BASE,
     ROOM_FOG_WAVE_MAX,
     ROOM_FOG_PRESSURE_BONUS_REASONS,
-    ROOM_ALARM_SPAWNS_ENABLED,
     INFECTION_SOURCE_BASE,
     INFECTION_SOURCE_MAX,
     INFECTION_SOURCE_STEP,
@@ -194,20 +193,65 @@ ROOM_SCENE_PREFIX = "room:"
 ROOM_W = 1900
 ROOM_H = 1180
 ROOM_DOOR_RADIUS = 74
+ROOM_PATHFIND_INTERVAL = 1.05
+ROOM_PATH_GOAL_CELL = 120
+ROOM_PATH_RECOMPUTES_PER_TICK = 4
+ROOM_NAV_NEIGHBOR_LIMIT = 14
+ROOM_PATH_ENDPOINT_NEIGHBORS = 10
 STAGE_FAILURE_REASONS = frozenset(("wipe", "abandon", "extraction_failed"))
 OBJECTIVE_ITEM_TYPES = frozenset(("fuse", "sample", "keycard", "lore"))
-ROOM_PRESSURE_QUIET_THRESHOLD = 1
-ROOM_PRESSURE_CONFIG = {
-    "lab": {"pool": 7, "pack": 1, "cooldown": 3.1, "initial": 2.2, "urgent": True},
-    "archive": {"pool": 5, "pack": 1, "cooldown": 3.7, "initial": 2.4, "urgent": True},
-    "morgue": {"pool": 6, "pack": 1, "cooldown": 3.3, "initial": 2.0, "urgent": True},
-    "security": {"pool": 5, "pack": 1, "cooldown": 3.8, "initial": 2.4, "urgent": True},
-    "armory": {"pool": 3, "pack": 1, "cooldown": 4.2, "initial": 3.0, "urgent": False},
-}
 ROOM_HAZARD_DPS = {
     "lab": 0.9,
     "archive": 0.45,
     "security": 0.35,
+    "morgue": 1.15,
+}
+ROOM_ENTRY_HINTS = {
+    "medbay": "搜药柜：医疗包和少量补给，翻找会弄出声音。",
+    "generator": "接入电力：消耗保险丝，扩大可见撤离情报。",
+    "lab": "采集样本：获得样本和研究零件，房间会持续污染。",
+    "armory": "搜武器柜：武器、弹药和零件，但警报可能响起。",
+    "archive": "检索档案：获得 1 份档案碎片，房间会持续污染。",
+    "security": "破解安保柜：消耗门禁卡，换取武器/零件和撤离情报。",
+    "morgue": "翻检尸袋：持续掉血，换取样本和急救物资。",
+}
+ROOM_REWARD_TABLE = {
+    "medbay": {
+        "guaranteed": ("medkit",),
+        "bonus": ("medkit", "ammo_pistol", "parts"),
+        "bonus_count": 1,
+        "status": "医疗物资已掉落",
+    },
+    "generator": {
+        "guaranteed": ("parts",),
+        "bonus": ("ammo_pistol", "shield"),
+        "bonus_count": 1,
+        "status": "电力恢复，维护箱已打开",
+    },
+    "lab": {
+        "guaranteed": ("sample",),
+        "bonus": ("parts", "ammo_pistol", "shield"),
+        "bonus_count": 1,
+        "status": "样本容器和研究物资已掉落",
+    },
+    "archive": {
+        "guaranteed": ("lore",),
+        "bonus": (),
+        "bonus_count": 0,
+        "status": "档案已掉落",
+    },
+    "security": {
+        "guaranteed": ("parts",),
+        "bonus": ("ammo_rifle", "ammo_smg", "shield"),
+        "bonus_count": 1,
+        "status": "安保柜物资已掉落",
+    },
+    "morgue": {
+        "guaranteed": ("sample",),
+        "bonus": ("medkit", "ammo_pistol", "parts"),
+        "bonus_count": 1,
+        "status": "样本和急救物资已掉落",
+    },
 }
 
 TALENT_DEFS = {
@@ -292,7 +336,6 @@ class Game:
         self.next_fog_wave_at = 0.0
         self.fog_active_until = 0.0
         self.pending_fog_spawns = []
-        self.room_alarm_spawns_enabled = ROOM_ALARM_SPAWNS_ENABLED
         self.intermission = None
         self.running = False
         self.last_tick = time.monotonic()
@@ -311,6 +354,7 @@ class Game:
         }
         self._next_payload_perf_at = 0.0
         self._overlap_resolves_this_tick = 0
+        self._room_path_recomputes_this_tick = 0
         self._gen_obstacles()
         self._start_stage_tasks()
         for _ in range(min(INITIAL_ZOMBIES, self.wave_remaining)):
@@ -621,9 +665,13 @@ class Game:
                 })
             return payload
         budget = max(1, self._wave_budget())
-        remaining = max(0, self.wave_remaining + len(self.zombies))
+        main_zombies = self._scene_zombie_count(SCENE_MAIN)
+        remaining = max(0, self.wave_remaining + main_zombies)
         killed = max(0, min(budget, budget - remaining))
-        boss_alive = any(zombie.get("type") == "boss" for zombie in self.zombies.values())
+        boss_alive = any(
+            zombie.get("type") == "boss" and self._entity_scene(zombie) == SCENE_MAIN
+            for zombie in self.zombies.values()
+        )
         visible_exits = [exit_point for exit_point in self.extractions if exit_point.get("visible")]
         ready_exits = [exit_point for exit_point in visible_exits if self._exit_ready(exit_point)]
         charging = next((exit_point for exit_point in self.extractions if exit_point.get("charge", 0) > 0), None)
@@ -1325,12 +1373,13 @@ class Game:
     def _zombie_waypoint(self, zombie, target, now):
         """Compute the next maze-aware waypoint for a zombie."""
         if self._entity_scene(zombie) != SCENE_MAIN:
-            return self._room_zombie_waypoint(zombie, target)
+            return self._room_zombie_waypoint(zombie, target, now)
         target_id = target.get("id")
         start_cell = self._world_to_cell(zombie["x"], zombie["y"])
         end_cell = self._world_to_cell(target["x"], target["y"])
         if start_cell == end_cell:
             zombie["path"] = [start_cell]
+            zombie["path_kind"] = "main"
             zombie["path_target"] = target_id
             zombie["path_goal"] = end_cell
             zombie["path_time"] = now
@@ -1340,6 +1389,8 @@ class Game:
             return target
 
         need_recompute = (
+            zombie.get("path_kind") != "main"
+            or
             zombie.get("path_target") != target_id
             or zombie.get("path_goal") != end_cell
             or now - zombie.get("path_time", 0) > PATHFIND_INTERVAL
@@ -1348,6 +1399,7 @@ class Game:
         if need_recompute:
             path = self._find_path_astar(start_cell, end_cell)
             zombie["path"] = path
+            zombie["path_kind"] = "main"
             zombie["path_target"] = target_id
             zombie["path_goal"] = end_cell
             zombie["path_time"] = now
@@ -1376,17 +1428,75 @@ class Game:
         waypoint = self._cell_center(next_cell)
         return {"x": waypoint[0], "y": waypoint[1], "id": target_id, "radius": target.get("radius", PLAYER_R)}
 
-    def _room_zombie_waypoint(self, zombie, target):
+    def _room_zombie_waypoint(self, zombie, target, now):
         scene_id = self._entity_scene(zombie)
         path_radius = zombie.get("radius", 16) + 8
         if not self._segment_blocked(zombie["x"], zombie["y"], target["x"], target["y"], radius=path_radius, scene=scene_id):
+            zombie["path"] = None
+            zombie["path_kind"] = "room_direct"
             return target
-        path = self._room_visibility_path(scene_id, zombie, target, path_radius)
+
+        target_id = target.get("id")
+        goal_key = (
+            round(target["x"] / ROOM_PATH_GOAL_CELL),
+            round(target["y"] / ROOM_PATH_GOAL_CELL),
+        )
+        path = zombie.get("path") if zombie.get("path_kind") == "room" else None
+        retry_due = zombie.get("path_source") == "fallback" and now >= zombie.get("path_retry_at", 0)
+        need_recompute = (
+            not path
+            or zombie.get("path_target") != target_id
+            or zombie.get("path_goal") != goal_key
+            or retry_due
+            or now - zombie.get("path_time", 0) > ROOM_PATHFIND_INTERVAL
+        )
+        if need_recompute and path and self._room_path_recomputes_this_tick >= ROOM_PATH_RECOMPUTES_PER_TICK:
+            need_recompute = False
+        if need_recompute:
+            can_recompute = self._room_path_recomputes_this_tick < ROOM_PATH_RECOMPUTES_PER_TICK
+            source = "visibility"
+            if can_recompute:
+                self._room_path_recomputes_this_tick += 1
+                path = self._room_visibility_path(scene_id, zombie, target, path_radius)
+            else:
+                source = "fallback"
+                path = None
+            if not path:
+                source = "fallback"
+                waypoint = self._room_fallback_waypoint(scene_id, zombie, target, path_radius)
+                path = [(zombie["x"], zombie["y"]), (waypoint["x"], waypoint["y"])] if waypoint else []
+            if not path:
+                zombie["path"] = None
+                zombie["path_kind"] = "room"
+                zombie["path_source"] = "blocked"
+                zombie["path_target"] = target_id
+                zombie["path_goal"] = goal_key
+                zombie["path_retry_at"] = now + 0.18
+                return {"x": zombie["x"], "y": zombie["y"], "id": target_id, "radius": target.get("radius", PLAYER_R)}
+            jitter = (int(zombie.get("id", 0)) % 13) * 0.055
+            zombie["path"] = path
+            zombie["path_kind"] = "room"
+            zombie["path_source"] = source
+            zombie["path_target"] = target_id
+            zombie["path_goal"] = goal_key
+            zombie["path_time"] = now + (jitter if source == "visibility" else 0)
+            zombie["path_retry_at"] = now + 0.12 + jitter * 0.22 if source == "fallback" else 0
+            zombie["path_idx"] = 1
+
         if path:
-            for wx, wy in path[1:]:
+            path_idx = min(max(1, zombie.get("path_idx", 1)), len(path) - 1)
+            while path_idx < len(path) - 1:
+                wx, wy = path[path_idx]
                 if math.hypot(zombie["x"] - wx, zombie["y"] - wy) > zombie.get("radius", 16) * 2.1:
-                    return {"x": wx, "y": wy, "id": target.get("id"), "radius": target.get("radius", PLAYER_R)}
-            return target
+                    break
+                path_idx += 1
+            zombie["path_idx"] = path_idx
+            wx, wy = path[path_idx]
+            if math.hypot(zombie["x"] - wx, zombie["y"] - wy) > zombie.get("radius", 16) * 2.1:
+                return {"x": wx, "y": wy, "id": target_id, "radius": target.get("radius", PLAYER_R)}
+        return target
+
+    def _room_fallback_waypoint(self, scene_id, zombie, target, path_radius):
         scene = self._scene_def(scene_id)
         best = None
         for idx, point in enumerate(scene.get("nav_points", [])):
@@ -1410,7 +1520,7 @@ class Game:
             if best is None or score < best[0]:
                 best = (score, wx, wy)
         if not best:
-            return target
+            return None
         _, wx, wy = best
         return {"x": wx, "y": wy, "id": target.get("id"), "radius": target.get("radius", PLAYER_R)}
 
@@ -1467,13 +1577,24 @@ class Game:
             return cached
         nodes = self._room_nav_points(scene_id, radius)
         adj = [[] for _ in nodes]
+        connected = set()
         for i, point in enumerate(nodes):
             ax, ay = point
-            for j in range(i + 1, len(nodes)):
-                bx, by = nodes[j]
+            candidates = heapq.nsmallest(
+                ROOM_NAV_NEIGHBOR_LIMIT,
+                (
+                    (math.hypot(nodes[j][0] - ax, nodes[j][1] - ay), j, nodes[j][0], nodes[j][1])
+                    for j in range(len(nodes))
+                    if j != i
+                ),
+            )
+            for step, j, bx, by in candidates:
+                edge = (min(i, j), max(i, j))
+                if edge in connected:
+                    continue
                 if self._segment_blocked(ax, ay, bx, by, radius=radius, scene=scene_id):
                     continue
-                step = math.hypot(bx - ax, by - ay)
+                connected.add(edge)
                 adj[i].append((j, step))
                 adj[j].append((i, step))
         cached = (nodes, adj)
@@ -1486,11 +1607,31 @@ class Game:
         nodes, adj = self._room_nav_graph(scene_id, path_radius)
         start_neighbors = []
         goal_neighbors = {}
-        for idx, (wx, wy) in enumerate(nodes):
+        endpoint_candidate_count = min(len(nodes), ROOM_PATH_ENDPOINT_NEIGHBORS * 3)
+        start_order = heapq.nsmallest(
+            endpoint_candidate_count,
+            (
+                (math.hypot(wx - start[0], wy - start[1]), idx, wx, wy)
+                for idx, (wx, wy) in enumerate(nodes)
+            ),
+        )
+        for step, idx, wx, wy in start_order:
             if not self._segment_blocked(start[0], start[1], wx, wy, radius=path_radius, scene=scene_id):
-                start_neighbors.append((idx, math.hypot(wx - start[0], wy - start[1])))
+                start_neighbors.append((idx, step))
+                if len(start_neighbors) >= ROOM_PATH_ENDPOINT_NEIGHBORS:
+                    break
+        goal_order = heapq.nsmallest(
+            endpoint_candidate_count,
+            (
+                (math.hypot(goal[0] - wx, goal[1] - wy), idx, wx, wy)
+                for idx, (wx, wy) in enumerate(nodes)
+            ),
+        )
+        for step, idx, wx, wy in goal_order:
             if not self._segment_blocked(wx, wy, goal[0], goal[1], radius=path_radius, scene=scene_id):
-                goal_neighbors[idx] = math.hypot(goal[0] - wx, goal[1] - wy)
+                goal_neighbors[idx] = step
+                if len(goal_neighbors) >= ROOM_PATH_ENDPOINT_NEIGHBORS:
+                    break
         if not start_neighbors or not goal_neighbors:
             return None
         goal_node = -1
@@ -1966,21 +2107,34 @@ class Game:
     def _pending_fog_spawn_count(self):
         return len(getattr(self, "pending_fog_spawns", []))
 
-    def _queue_fog_spawns(self, count, now, reason="director", urgent=True, origin=None, scene=SCENE_MAIN):
+    def _queue_fog_spawns(
+        self,
+        count,
+        now,
+        reason="director",
+        urgent=True,
+        origin=None,
+        scene=SCENE_MAIN,
+        independent=False,
+    ):
         if count <= 0 or len(self.zombies) + self._pending_fog_spawn_count() >= MAX_ZOMBIES:
             return 0, 0
-        available = self.wave_remaining + self.infection_source_remaining
-        if available <= 0:
-            return 0, 0
-        budget = min(count, available, MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count())
+        if independent:
+            budget = min(count, MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count())
+        else:
+            available = self.wave_remaining + self.infection_source_remaining
+            if available <= 0:
+                return 0, 0
+            budget = min(count, available, MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count())
         queued = 0
         source_count = 0
         origin_payload = dict(origin) if origin else None
         for index in range(max(0, budget)):
-            source = self._next_spawn_budget_source(allow_infection_source=True)
+            source = "room" if independent else self._next_spawn_budget_source(allow_infection_source=True)
             if not source:
                 break
-            self._consume_spawn_budget(source)
+            if not independent:
+                self._consume_spawn_budget(source)
             if source == "infection":
                 source_count += 1
             self.pending_fog_spawns.append({
@@ -2016,6 +2170,8 @@ class Game:
 
         spawned = 0
         for entry in spawn_now:
+            ztype = entry.get("ztype") or self._pressure_zombie_type(urgent=True)
+            self._prewarm_room_zombie_nav(entry.get("scene", SCENE_MAIN), ztype)
             x, y = self.safe_fog_spawn(
                 origin=entry.get("origin"),
                 scene=entry.get("scene", SCENE_MAIN),
@@ -2024,7 +2180,7 @@ class Game:
             zid = self.spawn_zombie(
                 x=x,
                 y=y,
-                ztype=entry.get("ztype") or self._pressure_zombie_type(urgent=True),
+                ztype=ztype,
                 emit=False,
                 pressure=True,
                 scene=entry.get("scene", SCENE_MAIN),
@@ -2035,16 +2191,30 @@ class Game:
             zombie["rally_until"] = max(zombie.get("rally_until", 0), entry.get("rally_until", now + 1.2))
             if entry.get("source") == "infection":
                 zombie["source"] = "infection"
+            elif entry.get("source") == "room":
+                zombie["source"] = "room"
             spawned += 1
         return spawned
 
-    def _spawn_pressure_pack(self, count, now, urgent=False, allow_infection_source=False, origin=None, scene=None):
+    def _spawn_pressure_pack(
+        self,
+        count,
+        now,
+        urgent=False,
+        allow_infection_source=False,
+        origin=None,
+        scene=None,
+        independent=False,
+    ):
         if count <= 0 or len(self.zombies) >= MAX_ZOMBIES:
             return 0
-        available = self.wave_remaining + (self.infection_source_remaining if allow_infection_source else 0)
-        if available <= 0:
-            return 0
-        budget = min(count, available, MAX_ZOMBIES - len(self.zombies))
+        if independent:
+            budget = min(count, MAX_ZOMBIES - len(self.zombies))
+        else:
+            available = self.wave_remaining + (self.infection_source_remaining if allow_infection_source else 0)
+            if available <= 0:
+                return 0
+            budget = min(count, available, MAX_ZOMBIES - len(self.zombies))
         spawned = 0
         spawned_from_source = 0
         spawn_scene = scene or (origin.get("scene") if origin else None)
@@ -2052,23 +2222,26 @@ class Game:
             alive = [p for p in self.players.values() if not p.get("dead") and not p.get("paused")]
             spawn_scene = self._entity_scene(random.choice(alive)) if alive else SCENE_MAIN
         for _ in range(max(0, budget)):
-            source = self._next_spawn_budget_source(allow_infection_source)
+            source = "room" if independent else self._next_spawn_budget_source(allow_infection_source)
             if not source:
                 break
             x = y = None
             if origin:
                 x, y = self.safe_fog_spawn(origin=origin, scene=spawn_scene)
+            ztype = self._pressure_zombie_type(urgent=urgent)
+            self._prewarm_room_zombie_nav(spawn_scene, ztype)
             zid = self.spawn_zombie(
                 x=x,
                 y=y,
-                ztype=self._pressure_zombie_type(urgent=urgent),
+                ztype=ztype,
                 emit=False,
                 pressure=True,
                 scene=spawn_scene,
             )
             if not zid:
                 continue
-            self._consume_spawn_budget(source)
+            if not independent:
+                self._consume_spawn_budget(source)
             spawned += 1
             if source == "infection":
                 spawned_from_source += 1
@@ -2077,6 +2250,8 @@ class Game:
                 zombie["rally_until"] = max(zombie.get("rally_until", 0), now + 1.2)
             if source == "infection":
                 zombie["source"] = "infection"
+            elif source == "room":
+                zombie["source"] = "room"
         if spawned_from_source and spawn_scene == SCENE_MAIN:
             self.fog_active_until = max(self.fog_active_until, now + 3.2)
         return spawned
@@ -2178,13 +2353,17 @@ class Game:
         }
         return scenes.get(reason, scenes["director"])
 
+    def _prewarm_room_zombie_nav(self, scene_id, ztype):
+        if not scene_id or scene_id == SCENE_MAIN:
+            return
+        meta = ZOMBIE_TYPES.get(ztype, ZOMBIE_TYPES["walker"])
+        self._room_nav_graph(scene_id, meta.get("radius", 16) + 8)
+
     def _trigger_fog_wave(self, now, reason="director", force=False, origin=None, scene=None):
         if len(self.zombies) >= MAX_ZOMBIES:
             return 0
         spawn_scene = scene or (origin.get("scene") if origin else None) or SCENE_MAIN
         indoor = spawn_scene != SCENE_MAIN
-        if indoor and not self.room_alarm_spawns_enabled:
-            return 0
         if not force and not indoor and now < self.next_fog_wave_at:
             return 0
         alive_count = max(
@@ -2207,10 +2386,15 @@ class Game:
                 + fog_scene.get("bonus", 0)
             )
             max_count = FOG_WAVE_MAX
+        available_budget = (
+            MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count()
+            if indoor
+            else self.wave_remaining + self.infection_source_remaining
+        )
         count = min(
             max_count,
             desired_count,
-            self.wave_remaining + self.infection_source_remaining,
+            available_budget,
             MAX_ZOMBIES - len(self.zombies) - self._pending_fog_spawn_count(),
         )
         if count <= 0:
@@ -2225,6 +2409,7 @@ class Game:
             urgent=True,
             origin=spawn_origin,
             scene=spawn_scene,
+            independent=indoor,
         )
         if not queued:
             return 0
@@ -2778,12 +2963,13 @@ class Game:
         self._emit_scene_change(sid, reason="enter_room")
         self._emit_to("facility_pulse", {
             "pid": sid,
-            "text": f"进入{room.get('label', '设施')}内部",
+            "text": f"{room.get('label', '设施')}内部 · {self._room_hint(room.get('effect', ''))}",
             "x": round(player["x"], 1),
             "y": round(player["y"], 1),
             "col": "#aee6ff",
             "facility": room.get("effect", ""),
         }, [sid])
+        self._trigger_room_entry_wave(sid, player, room, now)
         return True
 
     def _leave_room_scene(self, sid, player, now):
@@ -2927,49 +3113,79 @@ class Game:
             "noticeKey": notice_key or "",
         }, [player["id"]])
 
-    def _room_state_for_scene(self, room, scene_id):
-        if scene_id and scene_id != SCENE_MAIN:
-            return self.room_scenes.get(scene_id) or room
-        return room
-
-    def _room_zombie_count(self, scene_id):
+    def _scene_zombie_count(self, scene_id):
         return sum(1 for zombie in self.zombies.values() if self._entity_scene(zombie) == scene_id)
 
-    def _room_pressure_state(self, room, scene_id, effect, now):
-        config = ROOM_PRESSURE_CONFIG.get(effect)
-        if not config:
-            return None, None
-        state = self._room_state_for_scene(room, scene_id)
-        if "pressure_left" not in state:
-            state["pressure_left"] = config["pool"] + min(3, max(0, self.wave - 1) // 2)
-            state["pressure_cooldown"] = now + config.get("initial", 2.5)
-        return state, config
+    def _room_hint(self, effect):
+        return ROOM_ENTRY_HINTS.get(effect, "调查房间：搜索物资，同时承担房间风险。")
 
-    def _tick_room_pressure(self, room, player, scene_id, effect, now):
-        if scene_id != SCENE_MAIN and not self.room_alarm_spawns_enabled:
-            return 0
-        if self._pending_fog_spawn_count():
-            return 0
-        state, config = self._room_pressure_state(room, scene_id, effect, now)
-        if not state or not config:
-            return 0
-        if state.get("pressure_left", 0) <= 0 or now < state.get("pressure_cooldown", 0):
-            return 0
-        if self._room_zombie_count(scene_id) > ROOM_PRESSURE_QUIET_THRESHOLD:
-            return 0
-        count = min(config["pack"], state.get("pressure_left", 0))
-        spawned = self._spawn_pressure_pack(
-            count,
-            now,
-            urgent=config.get("urgent", False),
-            allow_infection_source=True,
-            origin=player,
-            scene=scene_id,
-        )
-        if spawned:
-            state["pressure_left"] = max(0, state.get("pressure_left", 0) - spawned)
-            state["pressure_cooldown"] = now + config["cooldown"]
+    def _room_reward_types(self, room, effect, player):
+        if effect == "armory":
+            if "pending_reward" in room:
+                reward = room["pending_reward"]
+            else:
+                reward = self._armory_reward_type(player)
+                room["pending_reward"] = reward
+            rewards = [reward]
+            ammo_reward = {
+                "weapon_rifle": "ammo_rifle",
+                "weapon_shotgun": "ammo_shell",
+                "weapon_smg": "ammo_smg",
+                "weapon_launcher": "ammo_explosive",
+            }.get(reward)
+            if ammo_reward:
+                rewards.append(ammo_reward)
+            elif reward not in ("ammo", "ammo_pistol", "ammo_rifle", "ammo_smg", "ammo_shell", "ammo_explosive"):
+                rewards.append("ammo")
+            rewards.append("parts")
+            return rewards
+        table = ROOM_REWARD_TABLE.get(effect)
+        if not table:
+            return []
+        rewards = list(table.get("guaranteed", ()))
+        bonus = list(table.get("bonus", ()))
+        random.shuffle(bonus)
+        rewards.extend(bonus[: max(0, int(table.get("bonus_count", 0)))])
+        return rewards
+
+    def _spawn_room_rewards(self, room, effect, player, scene_id):
+        spawned = []
+        primary_spawned = False
+        for index, item_type in enumerate(self._room_reward_types(room, effect, player)):
+            iid = self._spawn_item_in_feature(room, item_type, emit=True, scene=scene_id)
+            if iid is not None:
+                spawned.append(iid)
+                if index == 0:
+                    primary_spawned = True
+        if effect == "armory" and primary_spawned:
+            room.pop("pending_reward", None)
         return spawned
+
+    def _room_reward_status(self, effect, fallback):
+        table = ROOM_REWARD_TABLE.get(effect, {})
+        return table.get("status", fallback)
+
+    def _trigger_room_entry_wave(self, sid, player, room, now):
+        scene_id = self._entity_scene(player)
+        if scene_id == SCENE_MAIN:
+            return 0
+        scene = self.room_scenes.get(scene_id)
+        if not scene or scene.get("entry_wave_spawned"):
+            return 0
+        scene["entry_wave_spawned"] = True
+        room["alarm_spawned"] = True
+        reason = room.get("effect", "director")
+        queued = self._trigger_fog_wave(now, reason=reason, force=True, origin=player, scene=scene_id)
+        if queued:
+            self._facility_notice(
+                player,
+                now,
+                f"{self._fog_scene(reason).get('name', '雾袭')}：房间内出现感染体",
+                "#ff8a98",
+                repeat_after=4.5,
+                notice_key="room_entry_wave",
+            )
+        return queued
 
     def _apply_room_hazard(self, sid, player, scene_id, effect, dt, now):
         dps = ROOM_HAZARD_DPS.get(effect, 0)
@@ -2991,9 +3207,6 @@ class Game:
         room["next_reactor_at"] = now + 8.5
         self.lab_sample_until = max(self.lab_sample_until, now + 9.0)
         scene_id = self._entity_scene(player)
-        state, config = self._room_pressure_state(room, scene_id, "lab", now)
-        if state and config:
-            state["pressure_cooldown"] = max(state.get("pressure_cooldown", 0), now + 1.15)
         self._emit_to("lab_reactor", {
             "pid": sid,
             "text": "样本库共振：特殊感染体样本掉落提升 9 秒，感染信号正在靠近",
@@ -3043,13 +3256,20 @@ class Game:
                     if room.get("scene_id"):
                         label = room.get("label", "设施")
                         room_id = room.get("id", "")
+                        effect = room.get("effect", "")
                         player["facility_label"] = label
-                        player["facility_effect"] = room.get("effect", "")
+                        player["facility_effect"] = effect
                         player["facility_status"] = f"按 F 进入{label}"
                         if player.get("facility_room_id") != room_id:
                             player["facility_room_id"] = room_id
                             player["facility_search"] = 0
-                            self._facility_notice(player, now, f"按 F 进入{label}", "#aee6ff", notice_key="enter_prompt")
+                            self._facility_notice(
+                                player,
+                                now,
+                                f"按 F 进入{label} · {self._room_hint(effect)}",
+                                "#aee6ff",
+                                notice_key="enter_prompt",
+                            )
                         if player.pop("interact_requested", False):
                             self._enter_room_scene(sid, player, room, now)
                         continue
@@ -3073,11 +3293,10 @@ class Game:
             if entered_room:
                 player["facility_room_id"] = room_id
                 player["facility_search"] = 0
-                self._facility_notice(player, now, f"进入{label}", "#aee6ff")
+                self._facility_notice(player, now, f"{label}：{self._room_hint(effect)}", "#aee6ff")
 
             hazard_suffix = ""
             if scene_id != SCENE_MAIN:
-                self._tick_room_pressure(room, player, scene_id, effect, now)
                 if effect in ROOM_HAZARD_DPS:
                     self._apply_room_hazard(sid, player, scene_id, effect, dt, now)
                     if player.get("dead"):
@@ -3087,11 +3306,8 @@ class Game:
             if effect == "medbay":
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    medkit_pending = any(
-                        item.get("type") == "medkit" and self._entity_scene(item) == scene_id
-                        for item in self.items.values()
-                    )
-                    player["facility_status"] = ("急救包已掉落" if medkit_pending else "药柜已空") + hazard_suffix
+                    pending = any(self._entity_scene(item) == scene_id for item in self.items.values())
+                    player["facility_status"] = ("医疗物资待拾取" if pending else "药柜已空") + hazard_suffix
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 0.78))
@@ -3100,24 +3316,21 @@ class Game:
                     self._facility_notice(player, now, "病房药柜可能有急救包，但翻找会弄出声音", "#48f0a0")
                 if progress >= 1:
                     player["facility_search"] = 0
-                    iid = self._spawn_item_in_feature(room, "medkit", emit=True, scene=scene_id)
-                    if iid is not None:
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                    if spawned:
                         room["searched"] = True
                         room["active"] = False
-                        player["facility_status"] = "急救包已掉落" + hazard_suffix
+                        player["facility_status"] = self._room_reward_status(effect, "医疗物资已掉落") + hazard_suffix
                         self._emit_to("facility_used", {
                             "pid": sid,
                             "facility": "medbay",
-                            "text": "病房找到急救包，血雾被惊醒",
+                            "text": "病房翻出医疗物资",
                             "x": round(player["x"], 1),
                             "y": round(player["y"], 1),
                             "col": "#48f0a0",
-                            "item": iid,
+                            "item": spawned[0],
                             "quiet": True,
                         }, [sid])
-                    if not room.get("alarm_spawned"):
-                        room["alarm_spawned"] = True
-                        self._trigger_fog_wave(now, reason="medbay", force=True, origin=player)
             elif effect == "generator":
                 if room.get("searched"):
                     player["facility_search"] = 0
@@ -3133,6 +3346,7 @@ class Game:
                     room["searched"] = True
                     room["active"] = False
                     self.power_on = True
+                    self._spawn_room_rewards(room, effect, player, scene_id)
                     revealed = self._reveal_one_exit(now, source="generator")
                     player["facility_status"] = "供电已恢复"
                     self._emit("task_update", {
@@ -3154,9 +3368,6 @@ class Game:
                         "y": round(player["y"], 1),
                         "col": "#66d9ff",
                     }, [sid])
-                    if not room.get("alarm_spawned"):
-                        room["alarm_spawned"] = True
-                        self._trigger_fog_wave(now, reason="generator", force=True, origin=player)
                 else:
                     player["facility_search"] = 0
                     player["facility_status"] = "需要保险丝"
@@ -3164,37 +3375,31 @@ class Game:
             elif effect == "lab":
                 if entered_room:
                     self._trigger_lab_reactor(sid, player, room, now)
+                    self._facility_notice(player, now, "样本库共振中：击杀特殊感染体更容易掉样本", "#b7ff47")
                 self.lab_sample_until = max(self.lab_sample_until, now + 6.0)
                 left = max(0, self.lab_sample_until - now)
-                self._facility_notice(player, now, "样本库共振中：击杀特殊感染体更容易掉样本", "#b7ff47")
-                if not room.get("alarm_spawned"):
-                    room["alarm_spawned"] = True
-                    self._trigger_fog_wave(now, reason="lab", force=True, origin=player)
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    sample_pending = any(
-                        item.get("type") == "sample" and self._entity_scene(item) == scene_id
-                        for item in self.items.values()
-                    )
-                    player["facility_status"] = ("样本容器已掉落" if sample_pending else "样本柜已空") + hazard_suffix
+                    pending = any(self._entity_scene(item) == scene_id for item in self.items.values())
+                    player["facility_status"] = ("样本物资待拾取" if pending else "样本柜已空") + hazard_suffix
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 1.05))
                 player["facility_status"] = f"采集样本 {round(progress * 100)}% · 样本共振 {left:.0f}s{hazard_suffix}"
                 if progress >= 1:
                     player["facility_search"] = 0
-                    iid = self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
-                    if iid is not None:
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                    if spawned:
                         room["searched"] = True
-                        player["facility_status"] = "样本容器已掉落" + hazard_suffix
+                        player["facility_status"] = self._room_reward_status(effect, "样本容器已掉落") + hazard_suffix
                         self._emit_to("facility_used", {
                             "pid": sid,
                             "facility": "lab",
-                            "text": "样本容器掉落，感染读数升高",
+                            "text": "样本容器和研究物资已掉落",
                             "x": round(player["x"], 1),
                             "y": round(player["y"], 1),
                             "col": "#b7ff47",
-                            "item": iid,
+                            "item": spawned[0],
                             "quiet": True,
                         }, [sid])
             elif effect == "archive":
@@ -3209,38 +3414,24 @@ class Game:
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 1.18))
                 player["facility_status"] = f"检索档案 {round(progress * 100)}%{hazard_suffix}"
-                if entered_room and not room.get("alarm_spawned"):
-                    room["alarm_spawned"] = True
-                    self._trigger_fog_wave(now, reason="archive", force=True, origin=player)
                 if player["facility_search"] >= FACILITY_SEARCH_SECONDS * 1.18:
                     player["facility_search"] = 0
-                    iid = self._spawn_item_in_feature(room, "lore", emit=True, scene=scene_id)
-                    if iid is None:
-                        iid = self.spawn_item(
-                            player["x"],
-                            player["y"],
-                            item_type="lore",
-                            emit=True,
-                            scene=scene_id,
-                        )
-                    if iid is not None:
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                    if not spawned:
+                        iid = self.spawn_item(player["x"], player["y"], item_type="lore", emit=True, scene=scene_id)
+                        spawned = [iid] if iid is not None else []
+                    if spawned:
                         room["lore_dropped"] = True
                         room["searched"] = True
                         room["active"] = False
-                        player["facility_status"] = "档案已掉落" + hazard_suffix
+                        player["facility_status"] = self._room_reward_status(effect, "档案已掉落") + hazard_suffix
                         if random.random() < 0.55:
                             self._reveal_one_exit(now, source="archive")
-                        if not room.get("alarm_spawned"):
-                            room["alarm_spawned"] = True
-                            self._trigger_fog_wave(now, reason="archive", force=True, origin=player, scene=scene_id)
             elif effect == "security":
                 if room.get("searched"):
                     player["facility_search"] = 0
                     player["facility_status"] = "安保柜已空" + hazard_suffix
                     continue
-                if entered_room and not room.get("alarm_spawned"):
-                    room["alarm_spawned"] = True
-                    self._trigger_fog_wave(now, reason="security", force=True, origin=player, scene=scene_id)
                 if self.task_counts.get("keycard", 0) <= 0:
                     player["facility_search"] = 0
                     player["facility_status"] = "需要门禁卡" + hazard_suffix
@@ -3255,8 +3446,7 @@ class Game:
                 self.task_counts["keycard"] = max(0, self.task_counts.get("keycard", 0) - 1)
                 room["searched"] = True
                 room["active"] = False
-                reward = "parts" if random.random() < 0.55 else self._armory_reward_type(player)
-                self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
+                self._spawn_room_rewards(room, effect, player, scene_id)
                 revealed = self._reveal_one_exit(now, source="security")
                 player["facility_status"] = "安保柜已开" + hazard_suffix
                 self._emit("task_update", {
@@ -3278,77 +3468,50 @@ class Game:
                     "y": round(player["y"], 1),
                     "col": "#d98cff",
                 }, [sid])
-                if not room.get("alarm_spawned"):
-                    room["alarm_spawned"] = True
-                    self._trigger_fog_wave(now, reason="security", force=True, origin=player, scene=scene_id)
             elif effect == "morgue":
                 self.lab_sample_until = max(self.lab_sample_until, now + 4.0)
-                self._damage_player(
-                    sid,
-                    FACILITY_TOXIC_DAMAGE_PER_SEC * 0.42 * dt,
-                    now,
-                    source="morgue",
-                    source_scene=scene_id,
-                )
-                if player.get("dead"):
-                    continue
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    sample_pending = any(
-                        item.get("type") == "sample" and self._entity_scene(item) == scene_id
-                        for item in self.items.values()
-                    )
-                    player["facility_status"] = ("样本已掉落" if sample_pending else "尸袋已翻空") + hazard_suffix
+                    pending = any(self._entity_scene(item) == scene_id for item in self.items.values())
+                    player["facility_status"] = ("停尸间物资待拾取" if pending else "尸袋已翻空") + hazard_suffix
                     continue
                 if entered_room:
-                    self._facility_notice(player, now, "停尸间提高样本掉落，但尸袋开始动了", "#b7ff47")
-                    self._trigger_fog_wave(now, reason="morgue", force=True, origin=player, scene=scene_id)
+                    self._facility_notice(player, now, "停尸间会持续掉血，但能翻出样本和急救物资", "#b7ff47")
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / (FACILITY_SEARCH_SECONDS * 0.92))
                 player["facility_status"] = f"翻检尸袋 {round(progress * 100)}%{hazard_suffix}"
                 if progress >= 1:
                     player["facility_search"] = 0
-                    iid = self._spawn_item_in_feature(room, "sample", emit=True, scene=scene_id)
-                    if iid is not None:
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                    if spawned:
                         room["searched"] = True
                         room["active"] = False
-                        player["facility_status"] = "样本已掉落" + hazard_suffix
+                        player["facility_status"] = self._room_reward_status(effect, "样本已掉落") + hazard_suffix
             elif effect == "armory":
                 if room.get("searched"):
                     player["facility_search"] = 0
-                    player["facility_status"] = "柜门已空"
+                    player["facility_status"] = "柜门已空" + hazard_suffix
                     continue
                 player["facility_search"] = player.get("facility_search", 0) + dt
                 progress = min(1, player["facility_search"] / FACILITY_SEARCH_SECONDS)
-                player["facility_status"] = f"搜刮 {round(progress * 100)}%"
+                player["facility_status"] = f"搜刮仓库 {round(progress * 100)}%{hazard_suffix}"
                 if player["facility_search"] >= FACILITY_SEARCH_SECONDS:
                     player["facility_search"] = 0
-                    reward = room.pop("pending_reward", None) or self._armory_reward_type(player)
-                    iid = self._spawn_item_in_feature(room, reward, emit=True, scene=scene_id)
-                    ammo_reward = {
-                        "weapon_rifle": "ammo_rifle",
-                        "weapon_shotgun": "ammo_shell",
-                        "weapon_smg": "ammo_smg",
-                        "weapon_launcher": "ammo_explosive",
-                    }.get(reward)
-                    if ammo_reward:
-                        self._spawn_item_in_feature(room, ammo_reward, emit=True, scene=scene_id)
-                    elif reward not in ("ammo", "ammo_pistol", "ammo_rifle", "ammo_smg", "ammo_shell", "ammo_explosive"):
-                        self._spawn_item_in_feature(room, "ammo", emit=True, scene=scene_id)
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
                     room["searched"] = True
                     room["active"] = False
-                    meta = ITEM_TYPES.get(reward, {})
+                    primary_type = self.items.get(spawned[0], {}).get("type") if spawned else "parts"
+                    meta = ITEM_TYPES.get(primary_type, {})
                     self._emit_to("facility_used", {
                         "pid": sid,
                         "facility": "armory",
-                        "text": f"仓库只翻出 {meta.get('name', '补给')}，警报已触发",
+                        "text": f"仓库找到 {meta.get('name', '补给')} 和弹药零件",
                         "x": round(player["x"], 1),
                         "y": round(player["y"], 1),
                         "col": meta.get("color", "#ffc247"),
-                        "item": iid,
+                        "item": spawned[0] if spawned else None,
                         "quiet": True,
                     }, [sid])
-                    self._trigger_fog_wave(now, reason="armory", force=True, origin=player)
 
     def _vehicle_ram(self, sid, player, now, zombie_grid):
         if now < player.get("vehicle_ram_cd", 0):
@@ -3465,18 +3628,48 @@ class Game:
         dist = math.hypot(x2 - x1, y2 - y1)
         if dist <= 0.01:
             return False
-        steps = max(2, math.ceil(dist / 14))
         search_r = dist / 2 + MAZE_WALL + radius
         mx = (x1 + x2) / 2
         my = (y1 + y2) / 2
-        obstacles = list(self._near_obstacles(mx, my, search_r, scene=scene))
-        for i in range(1, steps):
-            t = i / steps
-            px = x1 + (x2 - x1) * t
-            py = y1 + (y2 - y1) * t
-            if any(circ_rect(px, py, radius, o["x"], o["y"], o["w"], o["h"]) for o in obstacles):
+        for obstacle in self._near_obstacles(mx, my, search_r, scene=scene):
+            if self._segment_hits_expanded_rect(x1, y1, x2, y2, obstacle, radius):
                 return True
         return False
+
+    @staticmethod
+    def _segment_hits_expanded_rect(x1, y1, x2, y2, obstacle, radius):
+        left = obstacle["x"] - radius
+        right = obstacle["x"] + obstacle["w"] + radius
+        top = obstacle["y"] - radius
+        bottom = obstacle["y"] + obstacle["h"] + radius
+        if left <= x1 <= right and top <= y1 <= bottom:
+            return True
+        if left <= x2 <= right and top <= y2 <= bottom:
+            return True
+        dx = x2 - x1
+        dy = y2 - y1
+        t0 = 0.0
+        t1 = 1.0
+        for p, q in (
+            (-dx, x1 - left),
+            (dx, right - x1),
+            (-dy, y1 - top),
+            (dy, bottom - y1),
+        ):
+            if abs(p) < 0.000001:
+                if q < 0:
+                    return False
+                continue
+            r = q / p
+            if p < 0:
+                if r > t1:
+                    return False
+                t0 = max(t0, r)
+            else:
+                if r < t0:
+                    return False
+                t1 = min(t1, r)
+        return True
 
     def _nearest_melee_target(self, player, zombie_grid=None, reach=MELEE_RANGE, require_arc=False):
         zombie_grid = zombie_grid or self._build_grid(self.zombies)
@@ -4443,6 +4636,7 @@ class Game:
                 return
 
     def _update_zombies(self, dt, now):
+        self._room_path_recomputes_this_tick = 0
         alive = [
             p for p in self.players.values()
             if not p.get("dead") and not p.get("paused")
@@ -5293,7 +5487,7 @@ class Game:
             "z": zombies,
             "b": bullets,
             "i": items,
-            "zt": len(self.zombies),
+            "zt": self._scene_zombie_count(scene_def.get("id", SCENE_MAIN)),
             "bt": len(self.bullets),
             "it": len(self.items),
             "w": self.wave,
