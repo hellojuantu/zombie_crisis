@@ -54,5 +54,4 @@ elif command -v xdg-open &>/dev/null; then
 fi
 
 info "启动游戏服务... 打开浏览器访问 $URL"
-info "单人静态版本：${URL}solo"
 python3 server_asgi.py

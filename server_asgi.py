@@ -109,11 +109,6 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@http_app.get("/solo", response_class=HTMLResponse)
-async def solo(request: Request):
-    return templates.TemplateResponse("solo.html", {"request": request})
-
-
 @sio.event
 async def connect(sid, environ, auth=None):
     return True

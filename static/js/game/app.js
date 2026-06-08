@@ -765,12 +765,9 @@ function sendInput(force = false) {
 }
 
 function createSocket() {
-  if (window.SP_MODE && window.ZCSimulationSP) {
-    return window.ZCSimulationSP.create();
-  }
   if (typeof window.io !== 'function') {
     ui.setJoinLoading(false);
-    ui.notify('本地运行脚本加载失败', '#ff6666');
+    ui.notify('Socket.IO 脚本加载失败', '#ff6666');
     return null;
   }
   return window.io(SOCKET_OPTIONS);
