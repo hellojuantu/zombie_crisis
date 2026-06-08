@@ -461,6 +461,7 @@
         weapon: 'pistol', weapons: ['pistol'],
         weaponLevel: 1,
         ammo: MAG_SIZE, magSize: MAG_SIZE,
+        weaponAmmo: { pistol: MAG_SIZE },
         ammoPools: { pistol: START_AMMO, rifle: 0, smg: 0, shell: 0, explosive: 0 },
         materials: 0, lore: 0,
         vehicle: false, vehicleUntil: 0,
@@ -512,33 +513,40 @@
 
       // weapon switch
       if (p.weapon_req && p.weapons.includes(p.weapon_req) && p.weapon_req !== p.weapon) {
+        // save current weapon ammo
+        if (!p.weaponAmmo) p.weaponAmmo = {};
+        p.weaponAmmo[p.weapon] = p.ammo;
+        // switch
         p.weapon = p.weapon_req;
         const wm = WEAPONS[p.weapon];
         p.magSize = wm.mag;
-        p.ammo = Math.min(p.ammo, p.magSize);
+        // restore this weapon's saved ammo (or full mag if never used)
+        p.ammo = p.weaponAmmo[p.weapon] !== undefined ? p.weaponAmmo[p.weapon] : wm.mag;
         p.reloadUntil = 0;
+        const at = wm.ammo || 'pistol';
+        const poolStr = Object.entries(p.ammoPools).map(([k, v]) => `${k}:${v}`).join(',');
+        this.transport.dispatch('weapon_switch', {
+          pid: 'local',
+          weapon: p.weapon,
+          weaponName: wm.name,
+          ammo: p.ammo,
+          magSize: p.magSize,
+          weapons: p.weapons,
+          ammoPools: poolStr,
+          currentReserve: p.ammoPools[at] || 0,
+          ammoType: at,
+          ammoTypeName: AMMO_LABELS[at] || '弹药',
+        });
       }
       p.weapon_req = '';
 
       // reload
       if (p.reload && p.reloadUntil === 0 && p.ammo < p.magSize) {
-        const wm = WEAPONS[p.weapon];
-        const reserve = p.ammoPools[wm.ammo] || 0;
-        if (reserve > 0) {
-          p.reloadUntil = now + wm.reload;
-          this.transport.dispatch('reload_start', { pid: 'local', seconds: wm.reload });
-        }
+        this._tryReload(p, now);
       }
       p.reload = false;
       if (p.reloadUntil > 0 && now >= p.reloadUntil) {
-        const wm = WEAPONS[p.weapon];
-        const need = p.magSize - p.ammo;
-        const reserve = p.ammoPools[wm.ammo] || 0;
-        const add = Math.min(need, reserve);
-        p.ammo += add;
-        p.ammoPools[wm.ammo] = reserve - add;
-        p.reloadUntil = 0;
-        this.transport.dispatch('reload_done', { pid: 'local' });
+        this._finishReload(p, now);
       }
 
       // dash
@@ -593,13 +601,65 @@
           this._fireWeapon(p, wm, now);
           p.fire = false;
         } else {
-          if (p.fire) { this.transport.dispatch('ammo_empty', { pid: 'local' }); p.fire = false; }
+          // auto-reload when magazine is empty, like the server does
+          if (!this._tryReload(p, now)) {
+            if (p.fire && now >= (p.dryUntil || 0)) {
+              p.dryUntil = now + 0.55;
+              const at = wm.ammo || 'pistol';
+              const poolStr = Object.entries(p.ammoPools).map(([k, v]) => `${k}:${v}`).join(',');
+              this.transport.dispatch('ammo_empty', {
+                pid: 'local', ammo: p.ammo, weapon: p.weapon, weaponName: wm.name,
+                ammoPools: poolStr, currentReserve: p.ammoPools[at] || 0,
+                ammoType: at, ammoTypeName: AMMO_LABELS[at] || '弹药',
+              });
+            }
+          }
+          p.fire = false;
         }
       } else {
         p.fire = false;
       }
 
       p.ackSeq = p.input_seq;
+    }
+
+    _tryReload(p, now) {
+      if (p.dead || p.reloadUntil > now) return false;
+      const wm = WEAPONS[p.weapon];
+      if (p.ammo >= p.magSize) return false;
+      const reserve = p.ammoPools[wm.ammo] || 0;
+      if (reserve <= 0) return false;
+      p.shooting = false;
+      p.reloadUntil = now + wm.reload;
+      const at = wm.ammo || 'pistol';
+      const poolStr = Object.entries(p.ammoPools).map(([k, v]) => `${k}:${v}`).join(',');
+      this.transport.dispatch('reload_start', {
+        pid: 'local', duration: wm.reload, ammo: p.ammo,
+        weapon: p.weapon, weaponName: wm.name, magSize: p.magSize,
+        ammoPools: poolStr, currentReserve: reserve,
+        ammoType: at, ammoTypeName: AMMO_LABELS[at] || '弹药',
+      });
+      return true;
+    }
+
+    _finishReload(p, now) {
+      if (!p.reloadUntil || p.reloadUntil > now) return;
+      p.reloadUntil = 0;
+      const wm = WEAPONS[p.weapon];
+      const need = p.magSize - p.ammo;
+      const reserve = p.ammoPools[wm.ammo] || 0;
+      const add = Math.min(need, reserve);
+      p.ammo += add;
+      p.ammoPools[wm.ammo] = reserve - add;
+      if (!p.weaponAmmo) p.weaponAmmo = {};
+      p.weaponAmmo[p.weapon] = p.ammo;
+      const at = wm.ammo || 'pistol';
+      const poolStr = Object.entries(p.ammoPools).map(([k, v]) => `${k}:${v}`).join(',');
+      this.transport.dispatch('reload_done', {
+        pid: 'local', ammo: p.ammo, weapon: p.weapon, weaponName: wm.name, magSize: p.magSize,
+        ammoPools: poolStr, currentReserve: p.ammoPools[at] || 0,
+        ammoType: at, ammoTypeName: AMMO_LABELS[at] || '弹药',
+      });
     }
 
     _fireWeapon(p, wm, now) {
@@ -1094,13 +1154,24 @@
       else if (type.startsWith('weapon_')) {
         const wid = type.replace('weapon_', '');
         if (WEAPONS[wid] && !p.weapons.includes(wid)) {
+          const wm = WEAPONS[wid];
+          if (!p.weaponAmmo) p.weaponAmmo = {};
+          p.weaponAmmo[p.weapon] = p.ammo;  // save current weapon ammo
           p.weapons.push(wid);
           p.weapon = wid;
-          p.magSize = WEAPONS[wid].mag;
-          p.ammo = p.magSize;
-          p.ammoPools[WEAPONS[wid].ammo] = (p.ammoPools[WEAPONS[wid].ammo] || 0) + WEAPONS[wid].mag * 3;
-          this.transport.dispatch('weapon_unlock', { pid: 'local', weapon: wid });
-          this.transport.dispatch('weapon_switch', { pid: 'local', weapon: wid, name: WEAPONS[wid].name });
+          p.magSize = wm.mag;
+          p.ammo = wm.mag;
+          p.weaponAmmo[wid] = wm.mag;
+          p.reloadUntil = 0;
+          p.ammoPools[wm.ammo] = (p.ammoPools[wm.ammo] || 0) + wm.mag * 3;
+          const at = wm.ammo || 'pistol';
+          const poolStr = Object.entries(p.ammoPools).map(([k, v]) => `${k}:${v}`).join(',');
+          this.transport.dispatch('weapon_unlock', { pid: 'local', weapon: wid, weaponName: wm.name, col: wm.color, x: item.x, y: item.y });
+          this.transport.dispatch('weapon_switch', {
+            pid: 'local', weapon: wid, weaponName: wm.name, ammo: p.ammo, magSize: p.magSize,
+            weapons: p.weapons, ammoPools: poolStr, currentReserve: p.ammoPools[at] || 0,
+            ammoType: at, ammoTypeName: AMMO_LABELS[at] || '弹药',
+          });
         }
       }
       else if (type === 'fuse' || type === 'sample' || type === 'keycard') {

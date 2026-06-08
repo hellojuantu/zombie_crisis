@@ -1,13 +1,15 @@
-/* touch_controls.js – dual joystick: left=move, right=aim+autofire */
+/* touch_controls.js – dual fixed joystick: left=move, right=aim+autofire */
 (function () {
   'use strict';
 
   if (!('ontouchstart' in window) && navigator.maxTouchPoints < 1) return;
 
-  var DEAD = 18, MAX_R = 60, AIM_DEAD = 14;
+  var DEAD = 16, MAX_R = 58, AIM_DEAD = 12;
 
   var activeKeys = {};
+  /* left stick state */
   var jId = null, jBx = 0, jBy = 0, jBase, jThumb;
+  /* right stick state */
   var rId = null, rBx = 0, rBy = 0, rBase, rThumb;
   var firing = false;
   var _canvas = null;
@@ -35,7 +37,6 @@
   function cv() { return _canvas || (_canvas = document.getElementById('gameCanvas') || document.body); }
 
   function aimDir(nx, ny) {
-    /* project far from screen centre so atan2 in app.js gets a clean angle */
     var cx = window.innerWidth * 0.5, cy = window.innerHeight * 0.5;
     window.dispatchEvent(new MouseEvent('mousemove', {
       clientX: cx + nx * 600, clientY: cy + ny * 600, bubbles: true,
@@ -57,7 +58,7 @@
     window.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true, cancelable: true }));
   }
 
-  /* ── joystick logic ──────────────────────────────────────────────────────── */
+  /* ── movement joystick logic ─────────────────────────────────────────────── */
   function updateMove(dx, dy) {
     var d = Math.hypot(dx, dy), c = Math.min(d, MAX_R);
     if (jThumb) {
@@ -72,6 +73,7 @@
     ny >  t ? pressKey('s') : releaseKey('s');
   }
 
+  /* ── aim joystick logic ──────────────────────────────────────────────────── */
   function updateAim(dx, dy) {
     var d = Math.hypot(dx, dy), c = Math.min(d, MAX_R);
     if (rThumb) {
@@ -91,25 +93,32 @@
     return e;
   }
 
-  function mkStick(accent) {
-    var base = el('div', {
+  /* Build a joystick at a fixed CSS position.
+     accent = thumb ring color (rgba string).
+     pos    = style object for positioning the base. */
+  function mkStick(accent, pos) {
+    var base = el('div', Object.assign({
       position: 'absolute',
-      width: '126px', height: '126px', borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.10)',
-      background: 'rgba(14,18,26,0.50)',
-      backdropFilter: 'blur(3px)',
+      width: '140px', height: '140px', borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.08)',
+      background: 'rgba(14,18,26,0.55)',
+      backdropFilter: 'blur(4px)',
       pointerEvents: 'none',
       opacity: '0',
-      transition: 'opacity 0.18s',
-    });
+      transition: 'opacity 0.2s',
+      /* centre-anchor the circle on its position point */
+      transform: 'translate(-50%, -50%)',
+    }, pos || {}));
+
     var thumb = el('div', {
       position: 'absolute', left: '50%', top: '50%',
-      width: '50px', height: '50px', borderRadius: '50%',
-      border: '1.5px solid ' + accent,
-      background: accent.replace('0.55', '0.13'),
+      width: '58px', height: '58px', borderRadius: '50%',
+      border: '2px solid ' + accent,
+      background: accent.replace(/[\d.]+\)$/, '0.10)'),
       transform: 'translate(-50%, -50%)',
       pointerEvents: 'none',
-      boxShadow: '0 0 16px ' + accent.replace('0.55', '0.20'),
+      boxShadow: '0 0 18px ' + accent.replace(/[\d.]+\)$/, '0.18)'),
+      transition: 'transform 0.04s',
     });
     base.appendChild(thumb);
     return { base: base, thumb: thumb };
@@ -182,7 +191,7 @@
     overlay.id = 'tc-overlay';
     document.body.appendChild(overlay);
 
-    /* left zone */
+    /* ── LEFT zone: touch anywhere in left half, joystick fixed at bottom-left ── */
     var lz = el('div', {
       position: 'absolute', left: '0', top: '0',
       width: '44%', height: '100%',
@@ -190,12 +199,15 @@
     });
     overlay.appendChild(lz);
 
-    var ls = mkStick('rgba(72,240,160,0.55)');
+    /* fixed rest position for left stick: 22% from left, 90px from bottom */
+    var ls = mkStick('rgba(72,240,160,0.60)', {
+      left: '22%', bottom: '90px', top: 'auto',
+      transform: 'translate(-50%, 50%)',
+    });
     jBase = ls.base; jThumb = ls.thumb;
-    Object.assign(jBase.style, { left: '21%', bottom: '76px', top: 'auto', transform: 'translate(-50%, 50%)' });
     lz.appendChild(jBase);
 
-    /* right zone */
+    /* ── RIGHT zone: touch anywhere in right half, joystick fixed at bottom-right ── */
     var rz = el('div', {
       position: 'absolute', right: '0', top: '0',
       width: '56%', height: '100%',
@@ -203,34 +215,23 @@
     });
     overlay.appendChild(rz);
 
-    var rs = mkStick('rgba(100,190,255,0.55)');
+    /* fixed rest position for right stick: 22% from right, 90px from bottom */
+    var rs = mkStick('rgba(72,240,160,0.60)', {
+      right: '18%', left: 'auto', bottom: '90px', top: 'auto',
+      transform: 'translate(50%, 50%)',
+    });
     rBase = rs.base; rThumb = rs.thumb;
-    Object.assign(rBase.style, { right: '16%', left: 'auto', bottom: '76px', top: 'auto', transform: 'translate(50%, 50%)' });
     rz.appendChild(rBase);
 
-    /* aim hint label */
-    var aimHint = el('div', {
-      position: 'absolute', right: '50%', top: '50%',
-      transform: 'translate(50%, -50%)',
-      color: 'rgba(255,255,255,0.10)',
-      fontSize: '11px', fontWeight: '600',
-      pointerEvents: 'none', whiteSpace: 'nowrap',
-      transition: 'opacity 0.6s',
-      fontFamily: 'Microsoft YaHei, Arial, sans-serif',
-    });
-    aimHint.textContent = '右摇杆 瞄准射击';
-    rz.appendChild(aimHint);
-
-    /* ── buttons ─────────────────────────────────────────────────────────────
-       Layout (bottom edge):
-         [dash]  [reload]          [prev] [next] [bag]
-         left stick                right stick
-    ── */
-    var dashBtn   = mkBtn('»', '冲刺', { bottom: '10px', left:  'calc(44% - 66px)' });
-    var reloadBtn = mkBtn('↺', '换弹', { bottom: '10px', left:  'calc(44% + 10px)' });
-    var wPrevBtn  = mkBtn('<', '上枪', { bottom: '10px', right: '158px' });
-    var wNextBtn  = mkBtn('>', '下枪', { bottom: '10px', right: '92px'  });
-    var bagBtn    = mkBtn('≡', '背包', { bottom: '10px', right: '16px'  });
+    /* ── action buttons ──────────────────────────────────────────────────────
+       Between the two joysticks, accessible to both thumbs.
+       Bottom centre area — row of small buttons.
+    ──────────────────────────────────────────────────────────────────────── */
+    var dashBtn   = mkBtn('»', '冲刺', { bottom: '12px', left:  'calc(44% - 68px)' });
+    var reloadBtn = mkBtn('↺', '换弹', { bottom: '12px', left:  'calc(44% + 8px)'  });
+    var wPrevBtn  = mkBtn('<', '上枪', { bottom: '12px', right: '162px' });
+    var wNextBtn  = mkBtn('>', '下枪', { bottom: '12px', right: '96px'  });
+    var bagBtn    = mkBtn('≡', '背包', { bottom: '12px', right: '18px'  });
 
     var allBtns = [dashBtn, reloadBtn, wPrevBtn, wNextBtn, bagBtn];
     allBtns.forEach(function (b) { overlay.appendChild(b); });
@@ -246,16 +247,18 @@
     bindBtn(wNextBtn,  function () { tapKey('e'); });
     bindBtn(bagBtn,    function () { tapKey('b'); });
 
-    /* ── left joystick events ────────────────────────────────────────────── */
+    /* ── left zone touch (movement) ──────────────────────────────────────── */
     lz.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
       if (jId !== null) return;
-      jId = t.identifier; jBx = t.clientX; jBy = t.clientY;
+      jId = t.identifier;
+      /* anchor joystick at touch point */
       var r = lz.getBoundingClientRect();
+      jBx = t.clientX; jBy = t.clientY;
       Object.assign(jBase.style, {
         left: (t.clientX - r.left) + 'px', top: (t.clientY - r.top) + 'px',
-        bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.92',
+        bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.90',
       });
       updateMove(0, 0);
     }, { passive: false });
@@ -274,8 +277,9 @@
         if (e.changedTouches[i].identifier !== jId) continue;
         jId = null;
         updateMove(0, 0);
+        /* snap back to rest */
         Object.assign(jBase.style, {
-          left: '21%', top: 'auto', bottom: '76px',
+          left: '22%', top: 'auto', bottom: '90px',
           transform: 'translate(-50%, 50%)', opacity: '0.50',
         });
       }
@@ -283,18 +287,19 @@
     lz.addEventListener('touchend',    jEnd, { passive: false });
     lz.addEventListener('touchcancel', jEnd, { passive: false });
 
-    /* ── right joystick events ───────────────────────────────────────────── */
+    /* ── right zone touch (aim) ──────────────────────────────────────────── */
     rz.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
       if (rId !== null) return;
-      rId = t.identifier; rBx = t.clientX; rBy = t.clientY;
+      rId = t.identifier;
+      /* anchor aim joystick at touch point */
       var r = rz.getBoundingClientRect();
+      rBx = t.clientX; rBy = t.clientY;
       Object.assign(rBase.style, {
         left: (t.clientX - r.left) + 'px', top: (t.clientY - r.top) + 'px',
-        right: 'auto', bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.92',
+        right: 'auto', bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.90',
       });
-      if (aimHint.style.opacity !== '0') aimHint.style.opacity = '0';
       updateAim(0, 0);
     }, { passive: false });
 
@@ -313,8 +318,9 @@
         rId = null;
         stopFire();
         rThumb.style.transform = 'translate(-50%, -50%)';
+        /* snap back to rest */
         Object.assign(rBase.style, {
-          right: '16%', left: 'auto', top: 'auto', bottom: '76px',
+          right: '18%', left: 'auto', top: 'auto', bottom: '90px',
           transform: 'translate(50%, 50%)', opacity: '0.50',
         });
       }
@@ -322,7 +328,7 @@
     rz.addEventListener('touchend',    rEnd, { passive: false });
     rz.addEventListener('touchcancel', rEnd, { passive: false });
 
-    /* ── enable after join screen hides ─────────────────────────────────── */
+    /* ── enable / disable after join screen ──────────────────────────────── */
     function setActive(on) {
       var pe = on ? 'auto' : 'none';
       lz.style.pointerEvents = pe;
@@ -346,8 +352,7 @@
 
     /* ── orientation ─────────────────────────────────────────────────────── */
     function checkOrientation() {
-      var p = window.innerWidth < window.innerHeight;
-      portrait.style.display = p ? 'flex' : 'none';
+      portrait.style.display = window.innerWidth < window.innerHeight ? 'flex' : 'none';
     }
     window.addEventListener('resize', checkOrientation);
     window.addEventListener('orientationchange', function () { setTimeout(checkOrientation, 120); });
