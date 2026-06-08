@@ -1047,6 +1047,10 @@ function setupSocket() {
     state.mission = data.mission ? Object.assign({}, state.mission || {}, data.mission) : state.mission;
     if (data.exits) state.exits = data.exits;
     state.intermission = data.intermission || null;
+    state.boss = data.boss || null;
+    state.lastZombies = data.lastZombies || null;
+    ui.setBossBar(state.boss);
+    ui.setLastZombies(state.lastZombies ? state.lastZombies.length : 0);
   });
 
   sock.on('scene_change', (data) => {
@@ -1152,12 +1156,22 @@ function setupSocket() {
     effects.particlesAt(data.x, data.y, data.color || '#ff4d7a', 36, 230, 0.58, 4.4);
     audio.boss();
   });
-  sock.on('boss_phase', (data) => {
-    if (!sceneMatches(data)) return;
-    ui.notify(data.text || `Boss 进入第 ${data.phase || 1} 阶段`, data.col || '#ff4d7a');
-    effects.ring(data.x, data.y, 210 + (data.phase || 1) * 42, data.col || '#ff4d7a', 0.8, 6);
-    effects.particlesAt(data.x, data.y, data.col || '#ff4d7a', 52, 280, 0.72, 5);
+  sock.on('boss_rage', (data) => {
+    ui.notify(data.text || `重型感染体进入狂暴 阶段${data.phase}`, '#ff4d7a');
+    if (sceneMatches(data)) {
+      effects.ring(data.x, data.y, 210 + (data.phase || 1) * 42, '#ff4d7a', 0.8, 6);
+      effects.particlesAt(data.x, data.y, '#ff4d7a', 52, 280, 0.72, 5);
+    }
     audio.boss();
+    audio.dread(1.2 + (data.phase || 1) * 0.2);
+  });
+  sock.on('golden_kill', (data) => {
+    ui.notify('黄金感染体击杀！大量奖励', '#ffd700');
+    if (sceneMatches(data)) {
+      effects.ring(data.x || me.x, data.y || me.y, 160, '#ffd700', 1.0, 7);
+      effects.particlesAt(data.x || me.x, data.y || me.y, '#ffd700', 60, 320, 0.8, 5);
+    }
+    audio.comboMilestone(3);
   });
   sock.on('fog_wave', (data) => {
     if (!sceneMatches(data)) return;
@@ -1346,7 +1360,14 @@ function setupSocket() {
     applyWeaponEvent(data);
     state.intermission = data.intermission || state.intermission;
     ui.setIntermission(state.intermission, me);
-    ui.setIntermissionFeedback(`${data.name || '天赋'} 已升级到 Lv.${data.level}`, data.col || '#48f0a0');
+    const talentDetails = {
+      vitality: `生命力 → 最大HP ${data.maxHp || '?'}`,
+      agility: `敏捷 → 移速 +12`,
+      capacity: `弹容 → 弹夹 +2`,
+      gunsmith: `枪匠 → 武器 Lv.${data.weaponLevel || '?'}`,
+    };
+    const detail = talentDetails[data.talent] || data.name || '天赋';
+    ui.setIntermissionFeedback(`${detail} (Lv.${data.level})`, data.col || '#48f0a0');
     effects.ring(data.x, data.y, 82, data.col || '#48f0a0', 0.5, 4);
     audio.reward();
   });
@@ -1516,6 +1537,9 @@ function setupSocket() {
       me.maxLives = Number.isFinite(data.maxLives) ? data.maxLives : me.maxLives;
       shooting = false;
       audio.playerDeath();
+      if (data.lostMaterials > 0) {
+        setTimeout(() => ui.notify(`死亡损失 ${data.lostMaterials} 零件`, '#ff9966'), 400);
+      }
     }
     if (state.pl[data.pid]) state.pl[data.pid].dead = true;
     effects.ring(data.x, data.y, 72, data.col || '#ff6666', 0.5, 4);
@@ -1589,6 +1613,9 @@ function setupSocket() {
     if (!sceneMatches(data)) return;
     ui.notify(`第 ${data.wave} 关撤离`, '#48f0a0');
     audio.extract();
+    if (data.stats && data.stats.length > 0) {
+      ui.showWaveStats(data.wave, data.stats, myId);
+    }
     if (data.boss_next) {
       setTimeout(() => {
         ui.notify('⚠ 预警：下一波存在重型变异体', '#ff4d7a');

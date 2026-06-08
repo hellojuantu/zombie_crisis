@@ -130,7 +130,7 @@ WEAPON_TYPES = {
         "bullet_speed": 940,
         "bullet_life": 1.05,
         "bullet_radius": 4.4,
-        "damage": 42,
+        "damage": 44,
         "pellets": 1,
         "spread": 0.035,
         "ammo_cost": 1,
@@ -162,8 +162,8 @@ WEAPON_TYPES = {
     },
     "smg": {
         "name": "冲锋枪",
-        "mag_size": 36,
-        "fire_interval": 0.068,
+        "mag_size": 30,
+        "fire_interval": 0.076,
         "reload_seconds": 1.2,
         "bullet_speed": 760,
         "bullet_life": 0.72,
@@ -181,7 +181,7 @@ WEAPON_TYPES = {
     },
     "launcher": {
         "name": "爆破枪",
-        "mag_size": 2,
+        "mag_size": 3,
         "fire_interval": 0.86,
         "reload_seconds": 1.75,
         "bullet_speed": 500,
@@ -195,9 +195,9 @@ WEAPON_TYPES = {
         "unlock_reserve": 0,
         "muzzle": 44,
         "color": "#ff8844",
-        "explosion_radius": 118,
-        "explosion_damage": 52,
-        "boss_damage_mult": 0.38,
+        "explosion_radius": 128,
+        "explosion_damage": 72,
+        "boss_damage_mult": 0.72,
         "pierce": 0,
     },
 }
@@ -213,7 +213,7 @@ MAX_ZOMBIES = 220
 INITIAL_ZOMBIES = 20
 ZOMBIE_SPAWN_DT = 0.12
 WAVE_BASE = 92
-WAVE_STEP = 24
+WAVE_STEP = 30
 ZOMBIE_ATTACK_RANGE = 8
 PRESSURE_SPAWN_MIN_DIST = 560
 PRESSURE_SPAWN_MAX_DIST = 900
@@ -225,9 +225,9 @@ CAMPAIGN_FINAL_WAVE = 6
 DIRECTOR_CHECK_DT = 1.05
 DIRECTOR_LEASH_RADIUS = 1680
 DIRECTOR_LEASH_AFTER = 4.5
-DIRECTOR_MIN_NEAR_ZOMBIES = 18
-DIRECTOR_NEAR_ZOMBIES_PER_PLAYER = 6
-DIRECTOR_MAX_NEAR_ZOMBIES = 54
+DIRECTOR_MIN_NEAR_ZOMBIES = 20
+DIRECTOR_NEAR_ZOMBIES_PER_PLAYER = 9
+DIRECTOR_MAX_NEAR_ZOMBIES = 64
 DIRECTOR_MAX_PRESSURE_SPAWNS = 8
 FOG_WAVE_COOLDOWN = 16.0
 FOG_WAVE_COUNT_BASE = 10
@@ -290,10 +290,10 @@ ITEM_SPAWN_DT = 13.5
 NUKE_RADIUS = 440
 
 LEVEL_XP_BASE = 90
-COMBO_WINDOW = 5.0
-COMBO_RAPID_BONUS_AT = 10
-COMBO_SPREAD_BONUS_AT = 20
-COMBO_SHIELD_BONUS_AT = 30
+COMBO_WINDOW = 6.0
+COMBO_RAPID_BONUS_AT = 8
+COMBO_SPREAD_BONUS_AT = 14
+COMBO_SHIELD_BONUS_AT = 22
 
 P_COLORS = ["#4da3ff", "#ff5b61", "#4ee483", "#ffc247"]
 P_NAMES = ["蓝色游骑", "红色火线", "绿色守望", "金色防线"]

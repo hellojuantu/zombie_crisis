@@ -35,13 +35,20 @@
       #scoreboard {
         position: fixed;
         z-index: 10;
-        background: linear-gradient(180deg, rgba(16, 20, 28, 0.86), rgba(7, 10, 15, 0.78));
-        border: 1px solid rgba(210, 232, 255, 0.14);
+        background: linear-gradient(180deg, rgba(16, 20, 28, 0.55), rgba(7, 10, 15, 0.48));
+        border: 1px solid rgba(210, 232, 255, 0.10);
         box-shadow:
-          0 14px 36px rgba(0, 0, 0, 0.36),
-          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+          0 14px 36px rgba(0, 0, 0, 0.22),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
         border-radius: 8px;
-        backdrop-filter: blur(9px);
+        backdrop-filter: blur(6px);
+        opacity: 0.72;
+        transition: opacity 0.2s ease;
+      }
+      #hud:hover,
+      #wave-info:hover,
+      #scoreboard:hover {
+        opacity: 1;
       }
       #hud {
         top: 10px;
@@ -940,6 +947,10 @@
         padding: 8px 12px;
         font-size: 13px;
       }
+      @keyframes pulse {
+        from { opacity: 0.6; }
+        to { opacity: 1; }
+      }
       #pause-overlay {
         position: fixed;
         inset: 0;
@@ -1192,6 +1203,6 @@
     <script src="/static/js/netcode.js?v=62"></script>
     <script src="/static/js/game/messages.js?v=62"></script>
     <script src="/static/js/game/scene_filter.js?v=62"></script>
-    <script type="module" src="/static/js/game/app.js?v=67"></script>
+    <script type="module" src="/static/js/game/app.js?v=68"></script>
   </body>
 </html>

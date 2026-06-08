@@ -58,6 +58,7 @@ class GameCoreTest(unittest.TestCase):
         game.bullets.clear()
         game.items.clear()
         game.wave_remaining = 999
+        game.wave_kills = 999
         game.zombie_spawn_timer = -999
         game.item_spawn_timer = -999
         game.add_player("p1")
@@ -417,8 +418,8 @@ class GameCoreTest(unittest.TestCase):
         game._unlock_weapon(player, "launcher", now, notify=False)
         game._switch_weapon("p1", player, "launcher", now, notify=False)
 
-        self.assertEqual(player["mag_size"], 2)
-        self.assertEqual(player["ammo"], 2)
+        self.assertEqual(player["mag_size"], 3)
+        self.assertEqual(player["ammo"], 3)
         self.assertEqual(player["ammo_reserve"]["explosive"], 0)
 
     def test_weapon_switch_to_rifle_uses_rifle_stats(self):
@@ -510,8 +511,8 @@ class GameCoreTest(unittest.TestCase):
         game._maybe_boss_phase(1, game.zombies[1], now + SERVER_DT)
 
         self.assertIn(1, game.zombies)
-        self.assertGreater(game.zombies[1]["hp"], 650)
-        self.assertTrue(any(ev == "boss_phase" and data["phase"] == 1 for ev, data in events))
+        self.assertGreater(game.zombies[1]["hp"], 620)
+        self.assertTrue(any(ev == "boss_rage" and data["phase"] == 1 for ev, data in events))
 
     def test_spitter_no_longer_damages_at_range(self):
         game, events = self.make_game()
@@ -1769,6 +1770,7 @@ class GameCoreTest(unittest.TestCase):
         }
         game.extractions = [exit_point]
         game.mission = exit_point
+        game.wave_kills = 999
         old_wave = game.wave
 
         game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
@@ -1842,6 +1844,7 @@ class GameCoreTest(unittest.TestCase):
         }
         game.extractions = [exit_point]
         game.mission = exit_point
+        game.wave_kills = 999
 
         game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
 
@@ -2215,6 +2218,7 @@ class GameCoreTest(unittest.TestCase):
         }
         game.extractions = [exit_point]
         game.mission = exit_point
+        game.wave_kills = 999
 
         game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
 
@@ -2280,6 +2284,7 @@ class GameCoreTest(unittest.TestCase):
         }
         game.extractions = [exit_point]
         game.mission = exit_point
+        game.wave_kills = 999
 
         game._update_mission(SERVER_DT, now)
 
@@ -2323,12 +2328,12 @@ class GameCoreTest(unittest.TestCase):
         game, events = self.make_game()
         now = game._now()
         player = game.players["p1"]
-        player["combo"] = 9
+        player["combo"] = 7
         player["combo_until"] = now + 2
 
         game._gain_score("p1", 12, 8, now)
 
-        self.assertEqual(player["combo"], 10)
+        self.assertEqual(player["combo"], 8)
         self.assertGreater(player["rapid_until"], now)
         self.assertTrue(any(ev == "combo_bonus" and data["type"] == "rapid" for ev, data in events))
 

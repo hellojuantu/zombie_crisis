@@ -325,6 +325,7 @@ class Game:
         self.extract_point = (MAP_W // 2, MAP_H // 2)
         self.extractions = []
         self.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
+        self._task_spawned = {"fuse": 0, "sample": 0, "keycard": 0}
         self.stage_director = {}
         self.next_stage_reveal = False
         self.mission = None
@@ -336,6 +337,8 @@ class Game:
         self.infection_source_remaining = self._infection_source_budget()
         self.wave_kills = 0
         self.wave_announced = False
+        self._golden_spawned = 0
+        self._golden_quota = 0
         self.zombie_spawn_timer = 0.0
         self.item_spawn_timer = 0.0
         self.director_timer = 0.0
@@ -366,6 +369,8 @@ class Game:
         alive = max(1, sum(1 for p in self.players.values() if not p.get("dead") and not p.get("paused")))
         scale = 0.4 + 0.6 * alive / MAX_PLAYERS
         initial_count = min(int((INITIAL_ZOMBIES + self.wave * 4) * scale), self.wave_remaining)
+        self._golden_spawned = 0
+        self._golden_quota = (1 + (self.wave - 3) // 2) if self.wave >= 3 else 0
         for _ in range(initial_count):
             if self.spawn_zombie(emit=False):
                 self.wave_remaining -= 1
@@ -380,6 +385,15 @@ class Game:
         base = WAVE_BASE + (self.wave - 1) * WAVE_STEP
         alive = max(1, sum(1 for p in self.players.values() if not p.get("dead")))
         return max(1, int(base * (0.4 + 0.6 * alive / MAX_PLAYERS)))
+
+    def _kill_threshold(self):
+        pct = 0.35 if self.wave == 1 else 0.42 if self.wave == 2 else 0.50
+        return int(max(1, self._wave_budget()) * pct)
+
+    def _kill_threshold_met(self):
+        if self._is_boss_wave():
+            return True
+        return self.wave_kills >= self._kill_threshold()
 
     def _infection_source_budget(self):
         return min(INFECTION_SOURCE_MAX, INFECTION_SOURCE_BASE + (self.wave - 1) * INFECTION_SOURCE_STEP)
@@ -577,6 +591,8 @@ class Game:
         return exits
 
     def _start_stage_tasks(self):
+        self._golden_spawned = 0
+        self._task_spawned = {"fuse": 0, "sample": 0, "keycard": 0}
         self.stage_director = self._stage_director_for_wave()
         self.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
         self.lab_sample_until = 0.0
@@ -584,9 +600,10 @@ class Game:
         self.extractions = self._new_extractions()
         self.mission = self.extractions[0] if self.extractions else None
         fuse_goal = max((exit_point.get("requires", {}).get("fuse", 0) for exit_point in self.extractions), default=0)
-        fuse_spawns = min(TASK_PICKUPS_PER_STAGE - (1 if self.wave <= 2 else 0), max(2, fuse_goal + 1))
-        for _ in range(fuse_spawns):
-            self.spawn_item(item_type="fuse", emit=False)
+        if fuse_goal > 0:
+            pre_spawn = max(1, fuse_goal - 1)
+            spawned = sum(1 for _ in range(min(pre_spawn, TASK_PICKUPS_PER_STAGE)) if self.spawn_item(item_type="fuse", emit=False))
+            self._task_spawned["fuse"] = spawned
         if (self.stage_director or {}).get("focus") == "sample":
             for _ in range(2):
                 self.spawn_item(item_type="ammo", emit=False)
@@ -700,8 +717,14 @@ class Game:
             else:
                 text = f"撤离失败，缺：{self._requires_text(charging.get('requires', {}))}"
         elif ready_exits:
-            title = "可撤离"
-            text = f"{ready_exits[0]['name']} 条件满足，进入终端范围等待 {EXTRACTION_CAPTURE_SECONDS:.1f}s"
+            threshold = self._kill_threshold()
+            if not self._kill_threshold_met():
+                still_need = threshold - self.wave_kills
+                title = "清场中"
+                text = f"物资已备齐，还需消灭 {still_need} 只感染体才能撤离"
+            else:
+                title = "可撤离"
+                text = f"{ready_exits[0]['name']} 条件满足，进入终端范围等待 {EXTRACTION_CAPTURE_SECONDS:.1f}s"
         elif boss_alive:
             title = "重型感染体"
             text = "它身上可能有门禁卡，打倒它再撤"
@@ -2503,7 +2526,15 @@ class Game:
         meta = ZOMBIE_TYPES[ztype]
         zid = self._next_z
         self._next_z += 1
-        max_hp = int(meta["hp"] * (1 + min(0.55, (self.wave - 1) * 0.045)))
+        max_hp = int(meta["hp"] * (1 + min(1.20, (self.wave - 1) * 0.09)))
+        golden = (
+            ztype not in ("boss", "warden")
+            and self._golden_spawned < self._golden_quota
+            and random.random() < 0.18
+        )
+        if golden:
+            max_hp = max_hp * 2
+            self._golden_spawned += 1
         self.zombies[zid] = {
             "id": zid,
             "x": x,
@@ -2514,7 +2545,8 @@ class Game:
             "hp": max_hp,
             "max_hp": max_hp,
             "radius": meta["radius"],
-            "color": meta["color"],
+            "color": "#ffd700" if golden else meta["color"],
+            "golden": golden,
             "target": None,
             "leap_cd": 0,
             "slam_cd": 0,
@@ -2787,7 +2819,8 @@ class Game:
             item["amount"] = amount
             item["ammo_type"] = ammo_type
         elif typ == "parts":
-            amount = random.randint(MATERIAL_PICKUP_MIN, MATERIAL_PICKUP_MAX)
+            wave_bonus = min(2, self.wave // 3)
+            amount = random.randint(MATERIAL_PICKUP_MIN + wave_bonus, MATERIAL_PICKUP_MAX + wave_bonus)
             player["materials"] = player.get("materials", 0) + amount
             item["amount"] = amount
         elif typ == "lore":
@@ -2873,43 +2906,63 @@ class Game:
             return
         ztype = (zombie or {}).get("type")
         scene = self._entity_scene(zombie or {})
-        if ztype in ("warden", "boss") and random.random() < 0.34:
-            self.spawn_item(x, y, item_type=random.choice(("shield", "ammo_explosive", "parts")), scene=scene)
+        if ztype in ("warden", "boss") and random.random() < 0.40:
+            self.spawn_item(x, y, item_type=random.choice(("shield", "ammo_explosive", "parts", "parts")), scene=scene)
             return
         if ztype in ("screamer", "bloater", "spitter") and random.random() < 0.18:
             self.spawn_item(x, y, item_type="shield", scene=scene)
             return
-        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss", "warden") and random.random() < 0.16:
+        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss", "warden") and random.random() < 0.28:
             self.spawn_item(x, y, item_type="parts", scene=scene)
             return
-        if ztype in ("runner", "crawler", "toxic") and random.random() < 0.14:
-            self.spawn_item(x, y, item_type="ammo", scene=scene)
+        if ztype in ("runner", "crawler", "toxic") and random.random() < 0.16:
+            self.spawn_item(x, y, item_type=random.choice(("ammo", "parts")), scene=scene)
             return
         roll = random.random()
         if roll < 0.06:
             self.spawn_item(x, y, item_type="ammo", scene=scene)
-        elif roll < 0.082:
+        elif roll < 0.14:
             self.spawn_item(x, y, item_type="parts", scene=scene)
-        elif roll < 0.11:
+        elif roll < 0.17:
             self.spawn_item(x, y, scene=scene)
 
     def _try_drop_task_item(self, zombie, now=None):
         if len(self.items) >= self._max_items:
             return
+        needs = {}
+        for ep in self.extractions:
+            for k, v in ep.get("requires", {}).items():
+                if v > 0:
+                    needs[k] = max(needs.get(k, 0), v)
+        if not needs:
+            return
+
+        def _quota_left(typ):
+            return max(0, needs.get(typ, 0) - self._task_spawned.get(typ, 0))
+
         ztype = zombie.get("type")
         item_type = None
         lab_boost = (now is not None and now < self.lab_sample_until) or self._near_room_effect(
             zombie.get("x", 0), zombie.get("y", 0), "lab", padding=110
         )
-        if ztype in ("toxic", "screamer", "bloater"):
-            item_type = "sample" if random.random() < (0.55 if lab_boost else 0.40) else None
-        elif ztype in ("runner", "brute", "armored", "boss"):
-            item_type = "keycard" if random.random() < (0.55 if ztype != "runner" else 0.28) else None
-        elif random.random() < 0.08 and not any(i.get("type") == "keycard" for i in self.items.values()):
-            item_type = "keycard"
-        elif random.random() < TASK_DROP_CHANCE * (0.92 if lab_boost else 0.42):
-            item_type = "sample"
+
+        if _quota_left("fuse") > 0 and ztype in ("brute", "armored", "warden"):
+            if random.random() < 0.35:
+                item_type = "fuse"
         if item_type:
+            self._task_spawned["fuse"] = self._task_spawned.get("fuse", 0) + 1
+            self.spawn_item(zombie["x"], zombie["y"], item_type=item_type, scene=self._entity_scene(zombie))
+            return
+        if _quota_left("sample") > 0 and ztype in ("toxic", "screamer", "bloater"):
+            item_type = "sample" if random.random() < (0.28 if lab_boost else 0.14) else None
+        elif _quota_left("keycard") > 0 and ztype in ("brute", "armored", "boss"):
+            if not any(i.get("type") == "keycard" for i in self.items.values()):
+                item_type = "keycard" if random.random() < 0.25 else None
+        elif _quota_left("keycard") > 0 and ztype == "runner" and random.random() < 0.10:
+            if not any(i.get("type") == "keycard" for i in self.items.values()):
+                item_type = "keycard"
+        if item_type:
+            self._task_spawned[item_type] = self._task_spawned.get(item_type, 0) + 1
             self.spawn_item(zombie["x"], zombie["y"], item_type=item_type, scene=self._entity_scene(zombie))
 
     def _item_pickup_reached(self, player, item):
@@ -3202,8 +3255,20 @@ class Game:
     def _spawn_room_rewards(self, room, effect, player, scene_id):
         spawned = []
         primary_spawned = False
+        needs = {}
+        for ep in self.extractions:
+            for k, v in ep.get("requires", {}).items():
+                if v > 0:
+                    needs[k] = max(needs.get(k, 0), v)
+        def _on_map(typ):
+            return sum(1 for i in self.items.values() if i.get("type") == typ)
+        def _still_need(typ):
+            return max(0, needs.get(typ, 0) - self.task_counts.get(typ, 0) - _on_map(typ))
         for index, item_type in enumerate(self._room_reward_types(room, effect, player)):
-            iid = self._spawn_item_in_feature(room, item_type, emit=True, scene=scene_id)
+            actual_type = item_type
+            if item_type in OBJECTIVE_ITEM_TYPES and _still_need(item_type) <= 0:
+                actual_type = "parts"
+            iid = self._spawn_item_in_feature(room, actual_type, emit=True, scene=scene_id)
             if iid is not None:
                 spawned.append(iid)
                 if index == 0:
@@ -3940,8 +4005,12 @@ class Game:
             damage = bullet["damage"]
             if hit_zombie.get("type") == "boss":
                 damage *= bullet.get("boss_damage_mult", 1.0)
+            actual_damage = min(damage, max(0, hit_zombie["hp"]))
             hit_zombie["hp"] -= damage
             hit_zombie["last_hit_by"] = bullet["owner"]
+            shooter = self.players.get(bullet["owner"])
+            if shooter:
+                shooter["wave_damage"] = shooter.get("wave_damage", 0) + actual_damage
             bullet.setdefault("hit_ids", set()).add(hit_id)
             if bullet.get("explosion_radius", 0) > 0:
                 self._explode_projectile(bullet, now)
@@ -3988,17 +4057,22 @@ class Game:
         self.zombies.pop(zid, None)
         meta = ZOMBIE_TYPES.get(zombie["type"], ZOMBIE_TYPES["walker"])
         self.wave_kills += 1
-        self._gain_score(sid, meta["score"], max(8, meta["score"] // 2), now, zombie["x"], zombie["y"])
+        golden = zombie.get("golden", False)
+        score_mult = 3 if golden else 1
+        self._gain_score(sid, meta["score"] * score_mult, max(8, meta["score"] // 2 * score_mult), now, zombie["x"], zombie["y"])
+        killer = self.players.get(sid)
+        if killer:
+            killer["wave_kills"] = killer.get("wave_kills", 0) + 1
         self._emit_near("z_die", {
             "zid": zid,
             "pid": sid,
             "type": zombie["type"],
             "x": round(zombie["x"], 1),
             "y": round(zombie["y"], 1),
-            "col": meta["color"],
+            "col": zombie.get("color", meta["color"]),
             "reason": reason,
+            "golden": golden,
         }, zombie["x"], zombie["y"], include=sid, scene=self._entity_scene(zombie))
-        killer = self.players.get(sid)
         if killer and killer.get("kills") == 1:
             self._emit_to("first_blood", {
                 "pid": sid,
@@ -4010,6 +4084,18 @@ class Game:
             self._explode_bloater(sid, zid, zombie, now)
         self._try_drop_task_item(zombie, now)
         self._try_drop_item(zombie["x"], zombie["y"], zombie)
+        if golden:
+            for _ in range(3):
+                self.spawn_item(zombie["x"], zombie["y"], item_type="parts", scene=self._entity_scene(zombie))
+            rare = random.choice(["damage_boost", "adrenaline", "shield", "nuke"])
+            self.spawn_item(zombie["x"], zombie["y"], item_type=rare, scene=self._entity_scene(zombie), force=True)
+            killer = self.players.get(sid)
+            self._emit_to("golden_kill", {
+                "pid": sid,
+                "x": round(zombie["x"], 1),
+                "y": round(zombie["y"], 1),
+                "col": killer["color"] if killer else "#ffd700",
+            }, list(self.players.keys()))
 
     def _explode_bloater(self, sid, zid, zombie, now):
         x = zombie["x"]
@@ -4072,6 +4158,9 @@ class Game:
         player["vehicle_until"] = 0
         player["vehicle_ram_cd"] = 0
         player["lives"] = max(0, int(player.get("lives", PLAYER_STAGE_LIVES)) - 1)
+        lost = int(player.get("materials", 0) * 0.15)
+        if lost > 0:
+            player["materials"] = max(0, player.get("materials", 0) - lost)
         self._emit_near("p_die", {
             "pid": sid,
             "killer": killer,
@@ -4080,6 +4169,7 @@ class Game:
             "col": player["color"],
             "lives": player.get("lives", 0),
             "maxLives": player.get("max_lives", PLAYER_STAGE_LIVES),
+            "lostMaterials": lost,
         }, player["x"], player["y"], include=sid, scene=self._entity_scene(player))
 
     def _try_dash(self, sid, player, now):
@@ -4308,7 +4398,9 @@ class Game:
                 continue
             spawned += 1
             self.zombies[new_id]["rally_until"] = max(self.zombies[new_id].get("rally_until", 0), now + 2.8)
-        self._emit_near("boss_phase", {
+        rage_texts = {1: "黑墙巨像受伤狂暴，召唤更多感染体！", 2: "黑墙巨像濒死，最后的狂潮！"}
+        main_players = [sid for sid, p in self.players.items() if self._entity_scene(p) == SCENE_MAIN]
+        self._emit_to("boss_rage", {
             "zid": zid,
             "phase": phase,
             "spawned": spawned,
@@ -4317,8 +4409,8 @@ class Game:
             "hp": round(max(0, zombie.get("hp", 0)), 1),
             "maxHp": zombie.get("max_hp", 1),
             "col": zombie.get("color", "#d9445f"),
-            "text": "黑墙巨像撕开墙体，新的感染体从雾里挤出。",
-        }, zombie["x"], zombie["y"], radius=EVENT_INTEREST_RADIUS * 1.4, scene=scene)
+            "text": rage_texts.get(phase, ""),
+        }, main_players)
 
     def _maybe_boss_slam(self, zid, zombie, target, dist, now):
         if zombie["type"] != "boss":
@@ -4452,7 +4544,18 @@ class Game:
         }
         for pid in list(self.players.keys()):
             self._emit_to("intermission_start", self._intermission_snapshot(pid), [pid])
+        self._drop_wave_clear_bonus(now, exit_point)
         save_game(self)
+
+    def _drop_wave_clear_bonus(self, now, exit_point):
+        ex, ey = exit_point.get("x", MAP_W // 2), exit_point.get("y", MAP_H // 2)
+        rare_pool = ["shield", "adrenaline", "damage_boost"]
+        bonus = random.choice(rare_pool)
+        self.spawn_item(ex, ey, item_type=bonus, emit=True, force=True)
+        if self.wave % 3 == 0:
+            ammo_types = ["ammo_pistol", "ammo_rifle", "ammo_smg", "ammo_shell"]
+            for _ in range(min(2, len(self.players))):
+                self.spawn_item(ex, ey, item_type=random.choice(ammo_types), emit=True, force=True)
 
     def _sync_intermission_players(self):
         if not self.intermission:
@@ -4506,6 +4609,17 @@ class Game:
     def _advance_stage(self, now, exit_point, players_in_zone, route_reward=None):
         self.intermission = None
         cleared_stage = self.wave
+        wave_stats = [
+            {
+                "pid": pid,
+                "nm": p.get("name", ""),
+                "col": p.get("color", "#ffffff"),
+                "kills": p.get("wave_kills", 0),
+                "damage": round(p.get("wave_damage", 0)),
+                "materials": p.get("materials", 0),
+            }
+            for pid, p in self.players.items()
+        ]
         self._emit("wave_clear", {
             "wave": cleared_stage,
             "name": exit_point["name"],
@@ -4513,12 +4627,16 @@ class Game:
             "y": round(exit_point["y"], 1),
             "sceneId": SCENE_MAIN,
             "boss_next": self._is_boss_wave(cleared_stage + 1),
+            "stats": wave_stats,
         })
         self.wave += 1
         self.wave_remaining = self._wave_budget()
         self.infection_source_remaining = self._infection_source_budget()
         self.wave_kills = 0
         self.wave_announced = True
+        for player in self.players.values():
+            player["wave_kills"] = 0
+            player["wave_damage"] = 0
         self.next_fog_wave_at = now + 5.0
         self.fog_active_until = 0.0
         self.pending_fog_spawns.clear()
@@ -4694,7 +4812,7 @@ class Game:
                 sid for sid, player in alive_players
                 if math.hypot(player["x"] - exit_point["x"], player["y"] - exit_point["y"]) <= exit_point["radius"] + PLAYER_R
             ]
-            if players_in_zone and self._exit_ready(exit_point):
+            if players_in_zone and self._exit_ready(exit_point) and self._kill_threshold_met():
                 exit_point["visible"] = True
                 self.mission = exit_point
                 if not exit_point.get("charge_fog_spawned"):
@@ -4971,7 +5089,7 @@ class Game:
         player["y"] = sy
         player["vx"] = 0
         player["vy"] = 0
-        player["hp"] = player["max_hp"]
+        player["hp"] = max(20, int(player["max_hp"] * 0.6))
         player["dead"] = False
         player["protect_until"] = now + PROTECT
         self._grant_emergency_ammo(player)
@@ -5170,6 +5288,8 @@ class Game:
             "xp": 0,
             "combo": 0,
             "combo_until": 0,
+            "wave_kills": 0,
+            "wave_damage": 0,
             "fire_requested": False,
             "input_seq": 0,
             "ack_seq": 0,
@@ -5542,7 +5662,29 @@ class Game:
             "mission": self._mission_snapshot(full=False),
             "exits": self._extractions_snapshot(full=False),
             "intermission": self._intermission_snapshot(sid),
+            "boss": self._boss_snapshot(),
+            "lastZombies": self._last_zombies_snapshot(),
         }
+
+    def _boss_snapshot(self):
+        for zombie in self.zombies.values():
+            if zombie.get("type") == "boss" and self._entity_scene(zombie) == SCENE_MAIN:
+                return {
+                    "hp": round(max(0, zombie["hp"]), 1),
+                    "maxHp": zombie["max_hp"],
+                    "phase": zombie.get("phase", 0),
+                    "x": round(zombie["x"], 1),
+                    "y": round(zombie["y"], 1),
+                }
+        return None
+
+    def _last_zombies_snapshot(self):
+        if self.wave_remaining > 0 or self.intermission:
+            return None
+        main_zombies = [z for z in self.zombies.values() if self._entity_scene(z) == SCENE_MAIN]
+        if 0 < len(main_zombies) <= 5:
+            return [{"x": round(z["x"], 1), "y": round(z["y"], 1)} for z in main_zombies]
+        return None
 
     def get_snapshot(self, sid=None, zombie_grid=None):
         perf_start = time.perf_counter()
