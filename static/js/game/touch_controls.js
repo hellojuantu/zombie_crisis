@@ -1,66 +1,87 @@
-/* touch_controls.js – virtual joystick + fire zone for mobile landscape play */
+/* touch_controls.js – dual joystick: left=move, right=aim+autofire */
 (function () {
   'use strict';
 
   if (!('ontouchstart' in window) && navigator.maxTouchPoints < 1) return;
 
-  var DEAD = 18;
-  var MAX_R = 68;
+  var DEAD = 18, MAX_R = 60, AIM_DEAD = 14;
+
   var activeKeys = {};
-  var jTouchId = null;
-  var jBaseX = 0, jBaseY = 0;
-  var aimTouchId = null;
-  var jThumb = null;
-  var jBaseEl = null;
+  var jId = null, jBx = 0, jBy = 0, jBase, jThumb;
+  var rId = null, rBx = 0, rBy = 0, rBase, rThumb;
+  var firing = false;
+  var _canvas = null;
 
   /* ── key helpers ─────────────────────────────────────────────────────────── */
-  function pressKey(key) {
-    if (activeKeys[key]) return;
-    activeKeys[key] = true;
+  function pressKey(k) {
+    if (activeKeys[k]) return;
+    activeKeys[k] = true;
     window.dispatchEvent(new KeyboardEvent('keydown', {
-      key: key, code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
+      key: k, code: k === ' ' ? 'Space' : 'Key' + k.toUpperCase(),
       bubbles: true, cancelable: true,
     }));
   }
-  function releaseKey(key) {
-    if (!activeKeys[key]) return;
-    activeKeys[key] = false;
+  function releaseKey(k) {
+    if (!activeKeys[k]) return;
+    activeKeys[k] = false;
     window.dispatchEvent(new KeyboardEvent('keyup', {
-      key: key, code: key === ' ' ? 'Space' : 'Key' + key.toUpperCase(),
+      key: k, code: k === ' ' ? 'Space' : 'Key' + k.toUpperCase(),
       bubbles: true, cancelable: true,
     }));
   }
-  function tapKey(key) { pressKey(key); setTimeout(function () { releaseKey(key); }, 90); }
+  function tapKey(k) { pressKey(k); setTimeout(function () { releaseKey(k); }, 90); }
 
-  /* ── mouse helpers ───────────────────────────────────────────────────────── */
-  function aimAt(cx, cy) {
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: cx, clientY: cy, bubbles: true }));
+  /* ── aim / fire ──────────────────────────────────────────────────────────── */
+  function cv() { return _canvas || (_canvas = document.getElementById('gameCanvas') || document.body); }
+
+  function aimDir(nx, ny) {
+    /* project far from screen centre so atan2 in app.js gets a clean angle */
+    var cx = window.innerWidth * 0.5, cy = window.innerHeight * 0.5;
+    window.dispatchEvent(new MouseEvent('mousemove', {
+      clientX: cx + nx * 600, clientY: cy + ny * 600, bubbles: true,
+    }));
   }
-  function startFire(cx, cy) {
-    aimAt(cx, cy);
-    var canvas = document.getElementById('gameCanvas') || document.body;
-    canvas.dispatchEvent(new MouseEvent('mousedown', {
-      button: 0, buttons: 1, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
+  function startFire(nx, ny) {
+    if (firing) return;
+    firing = true;
+    var cx = window.innerWidth * 0.5, cy = window.innerHeight * 0.5;
+    cv().dispatchEvent(new MouseEvent('mousedown', {
+      button: 0, buttons: 1,
+      clientX: cx + nx * 600, clientY: cy + ny * 600,
+      bubbles: true, cancelable: true,
     }));
   }
   function stopFire() {
+    if (!firing) return;
+    firing = false;
     window.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true, cancelable: true }));
   }
 
-  /* ── joystick ────────────────────────────────────────────────────────────── */
-  function updateJoystick(dx, dy) {
-    var d = Math.hypot(dx, dy);
-    var c = Math.min(d, MAX_R);
+  /* ── joystick logic ──────────────────────────────────────────────────────── */
+  function updateMove(dx, dy) {
+    var d = Math.hypot(dx, dy), c = Math.min(d, MAX_R);
     if (jThumb) {
       var tx = d > 0 ? (dx / d) * c : 0, ty = d > 0 ? (dy / d) * c : 0;
       jThumb.style.transform = 'translate(calc(-50% + ' + tx + 'px), calc(-50% + ' + ty + 'px))';
     }
     if (d < DEAD) { releaseKey('w'); releaseKey('s'); releaseKey('a'); releaseKey('d'); return; }
     var nx = dx / d, ny = dy / d, t = 0.36;
-    if (ny < -t) pressKey('w'); else releaseKey('w');
-    if (ny > t)  pressKey('s'); else releaseKey('s');
-    if (nx < -t) pressKey('a'); else releaseKey('a');
-    if (nx > t)  pressKey('d'); else releaseKey('d');
+    nx < -t ? pressKey('a') : releaseKey('a');
+    nx >  t ? pressKey('d') : releaseKey('d');
+    ny < -t ? pressKey('w') : releaseKey('w');
+    ny >  t ? pressKey('s') : releaseKey('s');
+  }
+
+  function updateAim(dx, dy) {
+    var d = Math.hypot(dx, dy), c = Math.min(d, MAX_R);
+    if (rThumb) {
+      var tx = d > 0 ? (dx / d) * c : 0, ty = d > 0 ? (dy / d) * c : 0;
+      rThumb.style.transform = 'translate(calc(-50% + ' + tx + 'px), calc(-50% + ' + ty + 'px))';
+    }
+    if (d < AIM_DEAD) { stopFire(); return; }
+    var nx = dx / d, ny = dy / d;
+    aimDir(nx, ny);
+    startFire(nx, ny);
   }
 
   /* ── DOM helpers ─────────────────────────────────────────────────────────── */
@@ -70,42 +91,67 @@
     return e;
   }
 
+  function mkStick(accent) {
+    var base = el('div', {
+      position: 'absolute',
+      width: '126px', height: '126px', borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.10)',
+      background: 'rgba(14,18,26,0.50)',
+      backdropFilter: 'blur(3px)',
+      pointerEvents: 'none',
+      opacity: '0',
+      transition: 'opacity 0.18s',
+    });
+    var thumb = el('div', {
+      position: 'absolute', left: '50%', top: '50%',
+      width: '50px', height: '50px', borderRadius: '50%',
+      border: '1.5px solid ' + accent,
+      background: accent.replace('0.55', '0.13'),
+      transform: 'translate(-50%, -50%)',
+      pointerEvents: 'none',
+      boxShadow: '0 0 16px ' + accent.replace('0.55', '0.20'),
+    });
+    base.appendChild(thumb);
+    return { base: base, thumb: thumb };
+  }
+
   function mkBtn(icon, label, styles) {
     var wrap = el('div', Object.assign({
       position: 'absolute',
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
       userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none',
-      cursor: 'pointer', pointerEvents: 'none',
+      cursor: 'pointer', pointerEvents: 'none', opacity: '0',
+      transition: 'opacity 0.2s',
     }, styles || {}));
-
     var circle = el('div', {
-      width: '50px', height: '50px', borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.20)',
-      background: 'rgba(14,18,26,0.78)',
+      width: '46px', height: '46px', borderRadius: '50%',
+      border: '1.5px solid rgba(255,255,255,0.18)',
+      background: 'rgba(14,18,26,0.80)',
       backdropFilter: 'blur(6px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: '17px', fontWeight: '900', color: 'rgba(210,225,241,0.88)',
+      fontSize: '16px', fontWeight: '900', color: 'rgba(210,225,241,0.88)',
       boxShadow: '0 2px 10px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.07)',
       transition: 'background 0.07s, border-color 0.07s, color 0.07s',
     });
     circle.textContent = icon;
-
     var lbl = el('div', {
-      fontSize: '10px', color: 'rgba(148,160,174,0.82)',
+      fontSize: '9px', color: 'rgba(148,160,174,0.80)',
       fontWeight: '600', letterSpacing: '0.3px', whiteSpace: 'nowrap',
     });
     lbl.textContent = label;
-
-    wrap.appendChild(circle);
-    wrap.appendChild(lbl);
+    wrap.appendChild(circle); wrap.appendChild(lbl);
     wrap._circle = circle;
     wrap._press = function (e) {
       e.preventDefault(); e.stopPropagation();
-      Object.assign(circle.style, { background: 'rgba(72,240,160,0.24)', borderColor: 'rgba(72,240,160,0.6)', color: '#48f0a0' });
+      Object.assign(circle.style, {
+        background: 'rgba(72,240,160,0.22)', borderColor: 'rgba(72,240,160,0.58)', color: '#48f0a0',
+      });
     };
     wrap._release = function (e) {
       if (e) { e.preventDefault(); e.stopPropagation(); }
-      Object.assign(circle.style, { background: 'rgba(14,18,26,0.78)', borderColor: 'rgba(255,255,255,0.20)', color: 'rgba(210,225,241,0.88)' });
+      Object.assign(circle.style, {
+        background: 'rgba(14,18,26,0.80)', borderColor: 'rgba(255,255,255,0.18)', color: 'rgba(210,225,241,0.88)',
+      });
     };
     return wrap;
   }
@@ -118,16 +164,16 @@
       background: '#050608', display: 'none',
       flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       color: '#edf2f7', fontFamily: 'Microsoft YaHei, Arial, sans-serif',
-      fontSize: '18px', textAlign: 'center', pointerEvents: 'auto',
+      textAlign: 'center', pointerEvents: 'auto',
     });
     portrait.id = 'tc-portrait';
     portrait.innerHTML =
-      '<div style="width:60px;height:60px;border:2.5px solid #48f0a0;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:18px;font-size:28px;color:#48f0a0">&#x21BB;</div>' +
-      '<div style="font-weight:800;font-size:20px">请将设备横屏</div>' +
-      '<div style="color:#9aa4af;font-size:13px;margin-top:10px">竖屏不支持游戏操作</div>';
+      '<div style="width:54px;height:54px;border:2.5px solid #48f0a0;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:14px;font-size:26px;color:#48f0a0">&#x21BB;</div>' +
+      '<div style="font-weight:800;font-size:19px">请将设备横屏</div>' +
+      '<div style="color:#9aa4af;font-size:13px;margin-top:8px">竖屏不支持游戏操作</div>';
     document.body.appendChild(portrait);
 
-    /* main overlay */
+    /* overlay */
     var overlay = el('div', {
       position: 'fixed', inset: '0', zIndex: '55',
       pointerEvents: 'none', touchAction: 'none',
@@ -137,97 +183,56 @@
     document.body.appendChild(overlay);
 
     /* left zone */
-    var leftZone = el('div', {
+    var lz = el('div', {
       position: 'absolute', left: '0', top: '0',
       width: '44%', height: '100%',
       pointerEvents: 'none', touchAction: 'none',
     });
-    overlay.appendChild(leftZone);
+    overlay.appendChild(lz);
 
-    /* joystick visual */
-    jBaseEl = el('div', {
-      position: 'absolute',
-      left: '22%', bottom: '90px',
-      width: '140px', height: '140px',
-      borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.10)',
-      background: 'rgba(14,18,26,0.45)',
-      backdropFilter: 'blur(3px)',
-      transform: 'translate(-50%, 50%)',
-      pointerEvents: 'none',
-      opacity: '0.55',
-      transition: 'opacity 0.18s',
-    });
-    leftZone.appendChild(jBaseEl);
-
-    jThumb = el('div', {
-      position: 'absolute', left: '50%', top: '50%',
-      width: '56px', height: '56px', borderRadius: '50%',
-      border: '1.5px solid rgba(72,240,160,0.52)',
-      background: 'rgba(72,240,160,0.14)',
-      transform: 'translate(-50%, -50%)',
-      pointerEvents: 'none',
-      boxShadow: '0 0 14px rgba(72,240,160,0.18)',
-    });
-    jBaseEl.appendChild(jThumb);
+    var ls = mkStick('rgba(72,240,160,0.55)');
+    jBase = ls.base; jThumb = ls.thumb;
+    Object.assign(jBase.style, { left: '21%', bottom: '76px', top: 'auto', transform: 'translate(-50%, 50%)' });
+    lz.appendChild(jBase);
 
     /* right zone */
-    var rightZone = el('div', {
+    var rz = el('div', {
       position: 'absolute', right: '0', top: '0',
       width: '56%', height: '100%',
       pointerEvents: 'none', touchAction: 'none',
     });
-    overlay.appendChild(rightZone);
+    overlay.appendChild(rz);
 
-    /* aim dot – appears at touch point in fire zone */
-    var aimDot = el('div', {
-      position: 'absolute', display: 'none',
-      width: '22px', height: '22px', borderRadius: '50%',
-      border: '1.5px solid rgba(255,255,255,0.55)',
-      background: 'rgba(255,255,255,0.10)',
-      transform: 'translate(-50%, -50%)',
-      pointerEvents: 'none',
-      boxShadow: '0 0 8px rgba(255,255,255,0.12)',
-    });
-    rightZone.appendChild(aimDot);
+    var rs = mkStick('rgba(100,190,255,0.55)');
+    rBase = rs.base; rThumb = rs.thumb;
+    Object.assign(rBase.style, { right: '16%', left: 'auto', bottom: '76px', top: 'auto', transform: 'translate(50%, 50%)' });
+    rz.appendChild(rBase);
 
-    /* aim crosshair lines */
-    ['w','h'].forEach(function(axis) {
-      var line = el('div', {
-        position: 'absolute',
-        background: 'rgba(255,255,255,0.35)',
-        borderRadius: '1px',
-        transform: axis === 'w' ? 'translate(-50%, -50%)' : 'translate(-50%, -50%)',
-        pointerEvents: 'none',
-        width:  axis === 'w' ? '14px' : '1.5px',
-        height: axis === 'w' ? '1.5px' : '14px',
-      });
-      aimDot.appendChild(line);
-    });
-
-    /* fire zone label (fades after first touch) */
-    var fireHint = el('div', {
-      position: 'absolute', left: '50%', top: '50%',
-      transform: 'translate(-50%, -50%)',
-      color: 'rgba(255,255,255,0.14)',
-      fontSize: '12px', fontWeight: '600', letterSpacing: '0.5px',
+    /* aim hint label */
+    var aimHint = el('div', {
+      position: 'absolute', right: '50%', top: '50%',
+      transform: 'translate(50%, -50%)',
+      color: 'rgba(255,255,255,0.10)',
+      fontSize: '11px', fontWeight: '600',
       pointerEvents: 'none', whiteSpace: 'nowrap',
       transition: 'opacity 0.6s',
       fontFamily: 'Microsoft YaHei, Arial, sans-serif',
     });
-    fireHint.textContent = '触控瞄准';
-    rightZone.appendChild(fireHint);
+    aimHint.textContent = '右摇杆 瞄准射击';
+    rz.appendChild(aimHint);
 
-    /* ── action buttons ────────────────────────────────────────────────────── */
-    /* Left-side: Reload and Dash – near left thumb bottom area */
-    var reloadBtn = mkBtn('↺', '换弹',  { bottom: '8px', left: 'calc(44% - 122px)' });
-    var dashBtn   = mkBtn('»', '冲刺',  { bottom: '8px', left: 'calc(44% - 58px)'  });
-    /* Right-side: Weapon prev/next and Bag – accessible to right thumb */
-    var wPrevBtn  = mkBtn('<',  '上枪', { bottom: '8px', right: '156px' });
-    var wNextBtn  = mkBtn('>',  '下枪', { bottom: '8px', right: '88px'  });
-    var bagBtn    = mkBtn('≡', '背包',  { bottom: '8px', right: '16px'  });
+    /* ── buttons ─────────────────────────────────────────────────────────────
+       Layout (bottom edge):
+         [dash]  [reload]          [prev] [next] [bag]
+         left stick                right stick
+    ── */
+    var dashBtn   = mkBtn('»', '冲刺', { bottom: '10px', left:  'calc(44% - 66px)' });
+    var reloadBtn = mkBtn('↺', '换弹', { bottom: '10px', left:  'calc(44% + 10px)' });
+    var wPrevBtn  = mkBtn('<', '上枪', { bottom: '10px', right: '158px' });
+    var wNextBtn  = mkBtn('>', '下枪', { bottom: '10px', right: '92px'  });
+    var bagBtn    = mkBtn('≡', '背包', { bottom: '10px', right: '16px'  });
 
-    var allBtns = [reloadBtn, dashBtn, wPrevBtn, wNextBtn, bagBtn];
+    var allBtns = [dashBtn, reloadBtn, wPrevBtn, wNextBtn, bagBtn];
     allBtns.forEach(function (b) { overlay.appendChild(b); });
 
     function bindBtn(b, fn) {
@@ -235,114 +240,99 @@
       b.addEventListener('touchend',   function (e) { b._release(e); }, { passive: false });
       b.addEventListener('touchcancel', function ()  { b._release(); });
     }
-    bindBtn(reloadBtn, function () { tapKey('r'); });
     bindBtn(dashBtn,   function () { tapKey(' '); });
+    bindBtn(reloadBtn, function () { tapKey('r'); });
     bindBtn(wPrevBtn,  function () { tapKey('q'); });
     bindBtn(wNextBtn,  function () { tapKey('e'); });
     bindBtn(bagBtn,    function () { tapKey('b'); });
 
-    /* ── joystick touch ────────────────────────────────────────────────────── */
-    leftZone.addEventListener('touchstart', function (e) {
+    /* ── left joystick events ────────────────────────────────────────────── */
+    lz.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
-      if (jTouchId === null) {
-        jTouchId = t.identifier;
-        var rect = leftZone.getBoundingClientRect();
-        jBaseX = t.clientX; jBaseY = t.clientY;
-        Object.assign(jBaseEl.style, {
-          left:   (t.clientX - rect.left) + 'px',
-          top:    (t.clientY - rect.top)  + 'px',
-          bottom: 'auto',
-          transform: 'translate(-50%, -50%)',
-          opacity: '0.9',
-        });
-        updateJoystick(0, 0);
-      }
+      if (jId !== null) return;
+      jId = t.identifier; jBx = t.clientX; jBy = t.clientY;
+      var r = lz.getBoundingClientRect();
+      Object.assign(jBase.style, {
+        left: (t.clientX - r.left) + 'px', top: (t.clientY - r.top) + 'px',
+        bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.92',
+      });
+      updateMove(0, 0);
     }, { passive: false });
 
-    leftZone.addEventListener('touchmove', function (e) {
+    lz.addEventListener('touchmove', function (e) {
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
         var t = e.changedTouches[i];
-        if (t.identifier === jTouchId) updateJoystick(t.clientX - jBaseX, t.clientY - jBaseY);
+        if (t.identifier === jId) updateMove(t.clientX - jBx, t.clientY - jBy);
       }
     }, { passive: false });
 
     function jEnd(e) {
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === jTouchId) {
-          jTouchId = null;
-          updateJoystick(0, 0);
-          Object.assign(jBaseEl.style, {
-            left: '22%', top: 'auto', bottom: '90px',
-            transform: 'translate(-50%, 50%)',
-            opacity: '0.55',
-          });
-        }
+        if (e.changedTouches[i].identifier !== jId) continue;
+        jId = null;
+        updateMove(0, 0);
+        Object.assign(jBase.style, {
+          left: '21%', top: 'auto', bottom: '76px',
+          transform: 'translate(-50%, 50%)', opacity: '0.50',
+        });
       }
     }
-    leftZone.addEventListener('touchend',   jEnd, { passive: false });
-    leftZone.addEventListener('touchcancel', jEnd, { passive: false });
+    lz.addEventListener('touchend',    jEnd, { passive: false });
+    lz.addEventListener('touchcancel', jEnd, { passive: false });
 
-    /* ── fire zone touch ───────────────────────────────────────────────────── */
-    var fireHintFaded = false;
-    rightZone.addEventListener('touchstart', function (e) {
+    /* ── right joystick events ───────────────────────────────────────────── */
+    rz.addEventListener('touchstart', function (e) {
       e.preventDefault();
       var t = e.changedTouches[0];
-      if (aimTouchId === null) {
-        aimTouchId = t.identifier;
-        var rect = rightZone.getBoundingClientRect();
-        aimDot.style.display = 'block';
-        aimDot.style.left = (t.clientX - rect.left) + 'px';
-        aimDot.style.top  = (t.clientY - rect.top)  + 'px';
-        if (!fireHintFaded) {
-          fireHintFaded = true;
-          fireHint.style.opacity = '0';
-        }
-        startFire(t.clientX, t.clientY);
-      }
+      if (rId !== null) return;
+      rId = t.identifier; rBx = t.clientX; rBy = t.clientY;
+      var r = rz.getBoundingClientRect();
+      Object.assign(rBase.style, {
+        left: (t.clientX - r.left) + 'px', top: (t.clientY - r.top) + 'px',
+        right: 'auto', bottom: 'auto', transform: 'translate(-50%, -50%)', opacity: '0.92',
+      });
+      if (aimHint.style.opacity !== '0') aimHint.style.opacity = '0';
+      updateAim(0, 0);
     }, { passive: false });
 
-    rightZone.addEventListener('touchmove', function (e) {
+    rz.addEventListener('touchmove', function (e) {
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
         var t = e.changedTouches[i];
-        if (t.identifier === aimTouchId) {
-          var rect = rightZone.getBoundingClientRect();
-          aimDot.style.left = (t.clientX - rect.left) + 'px';
-          aimDot.style.top  = (t.clientY - rect.top)  + 'px';
-          aimAt(t.clientX, t.clientY);
-        }
+        if (t.identifier === rId) updateAim(t.clientX - rBx, t.clientY - rBy);
       }
     }, { passive: false });
 
-    function fireEnd(e) {
+    function rEnd(e) {
       e.preventDefault();
       for (var i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === aimTouchId) {
-          aimTouchId = null;
-          aimDot.style.display = 'none';
-          stopFire();
-        }
+        if (e.changedTouches[i].identifier !== rId) continue;
+        rId = null;
+        stopFire();
+        rThumb.style.transform = 'translate(-50%, -50%)';
+        Object.assign(rBase.style, {
+          right: '16%', left: 'auto', top: 'auto', bottom: '76px',
+          transform: 'translate(50%, 50%)', opacity: '0.50',
+        });
       }
     }
-    rightZone.addEventListener('touchend',   fireEnd, { passive: false });
-    rightZone.addEventListener('touchcancel', fireEnd, { passive: false });
+    rz.addEventListener('touchend',    rEnd, { passive: false });
+    rz.addEventListener('touchcancel', rEnd, { passive: false });
 
-    /* ── enable zones after join-screen hides ──────────────────────────────── */
+    /* ── enable after join screen hides ─────────────────────────────────── */
     function setActive(on) {
       var pe = on ? 'auto' : 'none';
-      leftZone.style.pointerEvents  = pe;
-      rightZone.style.pointerEvents = pe;
-      allBtns.forEach(function (b) {
-        b.style.pointerEvents = pe;
-        b.style.opacity = on ? '1' : '0';
-        b.style.transition = 'opacity 0.2s';
-      });
+      lz.style.pointerEvents = pe;
+      rz.style.pointerEvents = pe;
+      allBtns.forEach(function (b) { b.style.pointerEvents = pe; b.style.opacity = on ? '1' : '0'; });
+      jBase.style.opacity = on ? '0.50' : '0';
+      rBase.style.opacity = on ? '0.50' : '0';
       if (!on) {
         releaseKey('w'); releaseKey('s'); releaseKey('a'); releaseKey('d');
-        if (aimTouchId !== null) { stopFire(); aimTouchId = null; aimDot.style.display = 'none'; }
+        stopFire(); jId = null; rId = null;
       }
     }
 
@@ -354,7 +344,7 @@
     }
     setActive(false);
 
-    /* ── orientation ───────────────────────────────────────────────────────── */
+    /* ── orientation ─────────────────────────────────────────────────────── */
     function checkOrientation() {
       var p = window.innerWidth < window.innerHeight;
       portrait.style.display = p ? 'flex' : 'none';

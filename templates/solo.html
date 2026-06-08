@@ -45,9 +45,9 @@
       #hud {
         top: 10px;
         left: 10px;
-        padding: 12px 58px 12px 16px;
+        padding: 10px 14px;
         font-size: 14px;
-        min-width: 220px;
+        min-width: 200px;
       }
       #wave-info {
         top: 10px;
@@ -1061,38 +1061,33 @@
          ════════════════════════════════════════════════════ */
       .touch-ui #hud {
         top: 0; left: 0;
-        max-width: 54%;
+        max-width: 56%;
         min-width: 0;
         border-radius: 0 0 8px 0;
         border-top: none; border-left: none;
-        padding: 5px 32px 5px 9px;
         font-size: 12px;
         line-height: 1.35;
       }
       .touch-ui #wave-info {
         top: 0; right: 0;
-        max-width: 46%;
+        max-width: 44%;
         min-width: 0;
         border-radius: 0 0 0 8px;
         border-top: none; border-right: none;
-        padding: 5px 8px;
         font-size: 11px;
         line-height: 1.3;
       }
-      /* Hidden on mobile */
-      .touch-ui #scoreboard          { display: none !important; }
-      .touch-ui #minimap             { display: none !important; }
-      .touch-ui #audioBtn            { display: none !important; }
-      .touch-ui #pname               { display: none; }
-      .touch-ui .hud-extra           { display: none; }
-      .touch-ui .weapon-hint         { display: none; }
-      .touch-ui #exitlist            { display: none; }
-      .touch-ui #mysterylog          { display: none; }
-      .touch-ui #storyline           { display: none; }
-      .touch-ui .stage-reset-button  { display: none; }
-      /* "生命" label — 2nd child of #hud */
-      .touch-ui #hud > div:nth-child(2) { display: none; }
-      /* Compact HUD elements */
+      /* Hidden on mobile (always) */
+      .touch-ui #scoreboard  { display: none !important; }
+      .touch-ui #minimap     { display: none !important; }
+      .touch-ui #audioBtn    { display: none !important; }
+      /* HUD bag-button smaller in ph row */
+      .touch-ui .ph .bag-button { width: 26px; height: 26px; }
+      .touch-ui .ph .bag-symbol { width: 13px; height: 14px; }
+      .touch-ui .ph .bag-symbol::before { left: 2px; right: 2px; top: -6px; height: 7px; }
+      .touch-ui .ph .bag-symbol::after  { left: 2px; right: 2px; top: 5px; }
+      .touch-ui .ph .bag-badge  { min-width: 14px; height: 14px; font-size: 9px; line-height: 14px; padding: 0 3px; right: -4px; top: -4px; }
+      /* Compact HUD elements (shown when user expands panel) */
       .touch-ui .big                 { font-size: 14px; }
       .touch-ui .loadout             { margin-top: 3px; padding-top: 3px; border-top-width: 1px; }
       .touch-ui .weapon-head b       { font-size: 13px; }
@@ -1128,6 +1123,57 @@
       .touch-ui .intro-step          { padding: 7px 10px; font-size: 13px; gap: 8px; }
       .touch-ui .intro-key           { min-width: 52px; font-size: 12px; padding: 4px 6px; }
       .touch-ui .intro-note          { font-size: 12px; }
+
+      /* ═══════════════════════════════════════════════════════
+         COLLAPSIBLE PANEL SYSTEM  (desktop + mobile)
+         Add class "pc" to #hud or #wave-info to collapse it.
+         JS toggles on click; touch-ui defaults to collapsed.
+         ═══════════════════════════════════════════════════════ */
+      .ph {
+        display: flex; align-items: center; gap: 6px;
+        cursor: pointer;
+        user-select: none; -webkit-user-select: none;
+      }
+      /* filler: visible when EXPANDED (keeps chevron right-aligned) */
+      .ph-g { flex: 1; min-width: 0; }
+      /* mini summary: hidden when EXPANDED, shown when COLLAPSED */
+      .ph-s {
+        flex: 1; min-width: 0;
+        font-size: 12px; color: #cfd8e2;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        display: none;
+      }
+      /* collapse chevron button */
+      .pchev {
+        flex: 0 0 18px; width: 18px; height: 18px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.05);
+        border-radius: 4px;
+        color: rgba(255,255,255,0.45);
+        font-size: 10px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: transform 0.2s, background 0.1s;
+        padding: 0; line-height: 1;
+      }
+      .pchev:hover { background: rgba(255,255,255,0.10); color: #edf2f7; }
+      /* collapsed state */
+      .pc > .pb           { display: none !important; }
+      .pc > .ph > .ph-s   { display: block; }
+      .pc > .ph > .ph-g   { display: none; }
+      .pc > .ph .pchev    { transform: rotate(-90deg); }
+      /* bag-button lives inside .ph row */
+      .ph .bag-button {
+        position: relative !important; right: auto !important; top: auto !important;
+        flex-shrink: 0;
+      }
+      /* panel body spacing */
+      .pb { margin-top: 8px; }
+      /* wave-info ph: float disabled inside flex */
+      #wavePH .ping-badge { float: none; margin-left: 0; }
+      /* ── Touch-ui panel overrides ── */
+      .touch-ui #hud        { padding: 5px 8px; }
+      .touch-ui #wave-info  { padding: 5px 8px; }
+      .touch-ui .pb         { margin-top: 4px; }
     </style>
   </head>
   <body>
@@ -1178,53 +1224,128 @@
           var h = document.getElementById('pcHints');
           if (h) h.style.display = 'none';
         }
+
+        /* ── Collapsible panels ── */
+        function togglePanel(id) {
+          var el = document.getElementById(id);
+          if (el) el.classList.toggle('pc');
+        }
+
+        /* sync mini summary text for HUD */
+        function syncHudMini() {
+          var hp  = document.getElementById('hpstat');
+          var wn  = document.getElementById('weaponname');
+          var am  = document.getElementById('ammostat');
+          var out = document.getElementById('hudS');
+          if (!out) return;
+          var txt = '♥ ' + (hp ? hp.textContent.trim() : '--');
+          if (wn && am) txt += '  ' + wn.textContent.trim() + ' ' + am.textContent.trim();
+          out.textContent = txt;
+        }
+
+        /* wire up toggle clicks */
+        var hudPH  = document.getElementById('hudPH');
+        var wavePH = document.getElementById('wavePH');
+        if (hudPH)  hudPH.addEventListener('click',  function () { togglePanel('hud'); });
+        if (wavePH) wavePH.addEventListener('click', function () { togglePanel('wave-info'); });
+
+        /* on touch-ui, panels start collapsed */
+        if (touch) {
+          document.addEventListener('DOMContentLoaded', function () {
+            var hud  = document.getElementById('hud');
+            var wave = document.getElementById('wave-info');
+            if (hud  && hud.style.display !== 'none')  hud.classList.add('pc');
+            if (wave && wave.style.display !== 'none') wave.classList.add('pc');
+          });
+        }
+
+        /* sync HUD mini text whenever HP or weapon changes */
+        document.addEventListener('DOMContentLoaded', function () {
+          var hud = document.getElementById('hud');
+          if (!hud) return;
+          /* watch hud show/hide to collapse on mobile */
+          if (touch) {
+            new MutationObserver(function (muts) {
+              muts.forEach(function (m) {
+                if (m.attributeName === 'style') {
+                  var el = m.target;
+                  if (el.style.display !== 'none') el.classList.add('pc');
+                }
+              });
+            }).observe(hud, { attributes: true, attributeFilter: ['style'] });
+            var wave = document.getElementById('wave-info');
+            if (wave) {
+              new MutationObserver(function (muts) {
+                muts.forEach(function (m) {
+                  if (m.attributeName === 'style' && m.target.style.display !== 'none')
+                    m.target.classList.add('pc');
+                });
+              }).observe(wave, { attributes: true, attributeFilter: ['style'] });
+            }
+          }
+          /* sync mini text whenever HP or ammo changes */
+          ['hpstat', 'weaponname', 'ammostat'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) new MutationObserver(syncHudMini).observe(el, { childList: true, subtree: true, characterData: true });
+          });
+        });
       })();
     </script>
 
     <div id="hud" style="display: none">
-      <div id="pname" style="font-weight: 800; font-size: 16px"></div>
-      <div style="margin-top: 8px">生命</div>
-      <div class="big" id="hpstat">100/100</div>
-      <div class="hud-extra">分数: <span id="scorestat" style="font-weight: 800; color: #ffc247">0</span></div>
-      <div class="hud-extra">
-        等级: <span id="lvl" style="font-weight: 800; color: #48f0a0">1</span>
-        <span id="combo" style="color: #ffc247"></span>
+      <!-- always-visible header: mini summary + bag + chevron -->
+      <div class="ph" id="hudPH">
+        <span class="ph-s" id="hudS"></span>
+        <span class="ph-g"></span>
+        <button class="bag-button" id="bag-summary" type="button" aria-label="打开背包">
+          <span class="bag-symbol" aria-hidden="true"></span>
+          <span class="bag-badge" id="bagcount">0</span>
+        </button>
+        <button class="pchev" id="hudChev" type="button" aria-label="展开/收起">▾</button>
       </div>
-      <div class="hud-extra">部署: <span id="livestat" style="font-weight: 800; color: #dce7f1">3/3</span></div>
-      <div class="loadout">
-        <div class="weapon-head"><b id="weaponname">手枪</b><span class="weapon-hint">右键/QE 换枪</span></div>
-        <div class="statusline">
-          <span id="ammostat" style="font-weight: 800; color: #dce7f1">24/24</span> ·
-          <span id="reservestat" style="font-weight: 800; color: #aeb7c2">108</span> · Lv.<span
-            id="weaponstat"
-            style="color: #ffc247; font-weight: 800"
-            >1</span
-          >
+      <!-- collapsible body -->
+      <div class="pb" id="hudPB">
+        <div id="pname" style="font-weight: 800; font-size: 15px"></div>
+        <div style="margin-top: 6px; font-size: 12px; color: #9aa4af">生命</div>
+        <div class="big" id="hpstat">100/100</div>
+        <div class="hud-extra">分数: <span id="scorestat" style="font-weight: 800; color: #ffc247">0</span></div>
+        <div class="hud-extra">
+          等级: <span id="lvl" style="font-weight: 800; color: #48f0a0">1</span>
+          <span id="combo" style="color: #ffc247"></span>
         </div>
-        <div class="weaponbelt" id="weaponbelt"></div>
+        <div class="hud-extra">部署: <span id="livestat" style="font-weight: 800; color: #dce7f1">3/3</span></div>
+        <div class="loadout">
+          <div class="weapon-head"><b id="weaponname">手枪</b><span class="weapon-hint">右键/QE 换枪</span></div>
+          <div class="statusline">
+            <span id="ammostat" style="font-weight: 800; color: #dce7f1">24/24</span> ·
+            <span id="reservestat" style="font-weight: 800; color: #aeb7c2">108</span> · Lv.<span
+              id="weaponstat" style="color: #ffc247; font-weight: 800">1</span>
+          </div>
+          <div class="weaponbelt" id="weaponbelt"></div>
+        </div>
       </div>
-      <button class="bag-button" id="bag-summary" type="button" aria-label="打开背包">
-        <span class="bag-symbol" aria-hidden="true"></span>
-        <span class="bag-badge" id="bagcount">0</span>
-      </button>
     </div>
 
     <div id="wave-info" style="display: none">
-      <div class="objective-head">
-        <div class="objective-titleline">
-          <span class="ping-badge">Ping <span id="pingstat">--</span></span
-          >第 <span id="wavestat" style="color: #ffc247; font-weight: 800">1</span> 关 · 感染体
-          <span id="zombiestat" style="color: #dce7f1; font-weight: 800">0</span>
-        </div>
-        <button class="stage-reset-button" id="restartStageBtn" type="button">放弃本关</button>
+      <!-- always-visible header: wave + zombie count + ping -->
+      <div class="ph" id="wavePH">
+        <span class="ph-g">第 <span id="wavestat" style="color: #ffc247; font-weight: 800">1</span> 关 · 感染体 <span id="zombiestat" style="color: #dce7f1; font-weight: 800">0</span></span>
+        <span class="ping-badge">Ping <span id="pingstat">--</span></span>
+        <button class="pchev" id="waveChev" type="button" aria-label="展开/收起">▾</button>
       </div>
-      <div id="objtitle" style="font-weight: 800; color: #ff4d5f; margin-top: 4px">搜寻撤离点</div>
-      <div id="objstat">收集任务物</div>
-      <div class="progress"><span id="objbar"></span></div>
-      <div id="tasklist" class="taskgrid"></div>
-      <div id="exitlist" class="exitlist"></div>
-      <div id="mysterylog" class="mystery"></div>
-      <div id="storyline" class="story">耳机里只剩呼吸声。</div>
+      <!-- collapsible body -->
+      <div class="pb" id="wavePB">
+        <div id="objtitle" style="font-weight: 800; color: #ff4d5f; margin-top: 4px">搜寻撤离点</div>
+        <div id="objstat">收集任务物</div>
+        <div class="progress"><span id="objbar"></span></div>
+        <div id="tasklist" class="taskgrid"></div>
+        <div id="exitlist" class="exitlist"></div>
+        <div id="mysterylog" class="mystery"></div>
+        <div id="storyline" class="story">耳机里只剩呼吸声。</div>
+        <div style="margin-top: 8px">
+          <button class="stage-reset-button" id="restartStageBtn" type="button">放弃本关</button>
+        </div>
+      </div>
     </div>
     <div id="scoreboard" style="display: none">
       <div style="font-weight: 800; margin-bottom: 5px">行动记录</div>
@@ -1327,7 +1448,7 @@
     <script src="/static/js/game/scene_filter.js?v=62"></script>
     <script src="/static/js/game/simulation_sp.js?v=2"></script>
     <script>window.SP_MODE = true;</script>
-    <script src="/static/js/game/touch_controls.js?v=1"></script>
+    <script src="/static/js/game/touch_controls.js?v=2"></script>
     <script type="module" src="/static/js/game/app.js?v=62"></script>
   </body>
 </html>
