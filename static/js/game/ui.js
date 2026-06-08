@@ -475,7 +475,7 @@ export function createUI() {
   }
 
   function updateHUD(data) {
-    const { me, state, weaponTypes = {}, weaponOrder = [], pingMs, training } = data;
+    const { me, state, weaponTypes = {}, weaponOrder = [], pingMs, training, inventoryOpen = false } = data;
     setIntermission(state.intermission, me);
     const maxHp = me.maxHp || 100;
     const hp = Math.max(0, Math.min(maxHp, Math.round(me.hp)));
@@ -514,7 +514,7 @@ export function createUI() {
       bagCount.textContent = total > 99 ? '99+' : `${total}`;
       bagCount.style.display = total > 0 ? 'block' : 'none';
     }
-    updateInventory(me, state, weaponTypes, weaponOrder);
+    if (inventoryOpen) updateInventory(me, state, weaponTypes, weaponOrder);
     document.getElementById('wavestat').textContent = state.wave || 1;
     document.getElementById('zombiestat').textContent = state.zt ?? Object.keys(state.z).length;
     const obj = state.obj || {};
@@ -603,5 +603,6 @@ export function createUI() {
     showGame,
     showJoin,
     updateHUD,
+    updateInventory,
   };
 }

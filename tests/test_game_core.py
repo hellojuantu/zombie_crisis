@@ -8,6 +8,7 @@ from server_game.config import (
     CAMPAIGN_FINAL_WAVE,
     EXTRACTION_CAPTURE_SECONDS,
     FACILITY_SEARCH_SECONDS,
+    GAME_VERSION,
     MISSION_CAPTURE_RADIUS,
     BULLET_DAMAGE,
     DASH_DIST,
@@ -1022,6 +1023,7 @@ class GameCoreTest(unittest.TestCase):
         game, _ = self.make_game()
         init = game.get_init_data("p1", game.players["p1"]["idx"])
 
+        self.assertEqual(init["cfg"]["gameVersion"], GAME_VERSION)
         self.assertEqual(init["cfg"]["playerSpeed"], 315)
         self.assertEqual(init["cfg"]["dashDist"], DASH_DIST)
         self.assertEqual(init["cfg"]["moveAccel"], MOVE_ACCEL)
@@ -1055,6 +1057,7 @@ class GameCoreTest(unittest.TestCase):
         self.assertGreater(len(game.floor_points), 35)
         self.assertGreater(len(game.map_features), 3)
         self.assertTrue(any(feature.get("kind") == "room" for feature in game.map_features))
+        self.assertTrue(any(feature.get("prompt") == "按 F 进入" for feature in game.map_features if feature.get("kind") == "room"))
         self.assertTrue(any(exit_point.get("rewardTitle") for exit_point in game.extractions))
 
         game.add_player("p1")

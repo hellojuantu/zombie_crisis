@@ -1,5 +1,17 @@
 """Authoritative tuning constants for Zombie Crisis."""
 
+from pathlib import Path
+
+
+def _read_game_version():
+    try:
+        version = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "0.0.0-dev"
+    return version or "0.0.0-dev"
+
+
+GAME_VERSION = _read_game_version()
 MAP_W = 3400
 MAP_H = 3400
 
@@ -30,8 +42,8 @@ DYNAMIC_AOI_RADIUS_MAIN = 980
 DYNAMIC_AOI_RADIUS_ROOM = 520
 EVENT_INTEREST_RADIUS = 1080
 MAX_SYNC_PLAYERS_PER_CLIENT = 32
-MAX_SYNC_ZOMBIES_PER_CLIENT = 72
-MAX_SYNC_BULLETS_PER_CLIENT = 40
+MAX_SYNC_ZOMBIES_PER_CLIENT = 56
+MAX_SYNC_BULLETS_PER_CLIENT = 28
 MAX_SYNC_ITEMS_PER_CLIENT = 16
 LEADERBOARD_SIZE = 8
 

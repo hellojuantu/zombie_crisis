@@ -87,8 +87,19 @@ assert.strictEqual(softResult.error, 20);
 assert.strictEqual(softResult.dx, 20);
 assert.strictEqual(softResult.dy, 0);
 assert.strictEqual(softResult.mode, 'soft');
-assert.strictEqual(Number(softPlayer.x.toFixed(1)), 120);
-assert.strictEqual(Number(softPlayer.vx.toFixed(1)), 50);
+assert.strictEqual(Number(softPlayer.x.toFixed(1)), 101);
+assert.strictEqual(Number(softPlayer.vx.toFixed(1)), 2.5);
+
+const hardPlayer = { x: 100, y: 100, vx: 0, vy: 0 };
+const hardPredictor = prediction.createPredictor({
+  softSnap: 5,
+  hardSnap: 20,
+  softFactor: 0.05,
+});
+const hardResult = hardPredictor.reconcile(hardPlayer, { x: 140, y: 100, vx: 80, vy: 0 }, 0, []);
+assert.strictEqual(hardResult.mode, 'hard');
+assert.strictEqual(Number(hardPlayer.x.toFixed(1)), 140);
+assert.strictEqual(Number(hardPlayer.vx.toFixed(1)), 80);
 
 const immediatePlayer = { x: 100, y: 100, vx: 0, vy: 0 };
 const immediatePredictor = prediction.createPredictor({

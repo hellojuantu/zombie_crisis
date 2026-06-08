@@ -1,7 +1,7 @@
 import { createAudio } from './audio.js?v=62';
 import { createEffects } from './effects.js?v=62';
-import { createRenderer } from './render.js?v=62';
-import { createUI } from './ui.js?v=62';
+import { createRenderer } from './render.js?v=63';
+import { createUI } from './ui.js?v=63';
 
 const { ZCProtocol, ZCPrediction, ZCInterpolation, ZCCamera, ZCTiming, ZCNetcode } = window;
 const { stageFailedMessage } = window.ZCMessages;
@@ -62,9 +62,9 @@ const predictor = ZCPrediction.createPredictor({
   radius: playerRadius,
   mapW,
   mapH,
-  softSnap: 48,
-  hardSnap: 220,
-  softFactor: 0.035,
+  softSnap: 22,
+  hardSnap: 110,
+  softFactor: 0.16,
 });
 const camera = ZCCamera.createCamera({
   stiffness: 18,
@@ -1671,6 +1671,7 @@ function setInventoryOpen(open) {
   me.vy = 0;
   inputDirty = true;
   ui.setInventoryOpen(open);
+  if (open) ui.updateInventory(me, state, weaponTypes, weaponOrder);
   sendInput(true);
 }
 
@@ -1938,6 +1939,7 @@ function loop(ts) {
       weaponOrder,
       pingMs,
       training,
+      inventoryOpen,
     });
   }
   requestAnimationFrame(loop);

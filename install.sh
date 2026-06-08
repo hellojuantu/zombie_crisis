@@ -2,6 +2,7 @@
 set -e
 
 REPO_URL="https://github.com/hellojuantu/zombie_crisis.git"
+REMOTE_VERSION_URL="https://raw.githubusercontent.com/hellojuantu/zombie_crisis/refs/heads/main/VERSION"
 INSTALL_DIR="${ZOMBIE_CRISIS_INSTALL_DIR:-$HOME/zombie_crisis}"
 STATE_DIR="${ZOMBIE_CRISIS_STATE_DIR:-$HOME/.zombie_crisis}"
 BIN_DIR="$STATE_DIR/bin"
@@ -10,6 +11,7 @@ LOG_DIR="$STATE_DIR/logs"
 INSTALL_LOG="$LOG_DIR/install.log"
 SERVER_LOG="$LOG_DIR/server.log"
 PID_FILE="$STATE_DIR/server.pid"
+STATE_VERSION_FILE="$STATE_DIR/version"
 URL="http://localhost:8080/"
 
 RED='\033[0;31m'
@@ -51,6 +53,7 @@ usage() {
   status       查看服务状态
   open         打开游戏网页
   logs         查看服务日志
+  version      查看本地和远端版本
   uninstall    停止服务并删除游戏与本地状态
   help         显示帮助
 
@@ -64,6 +67,7 @@ usage() {
   $CONTROL_BIN stop
   $CONTROL_BIN restart
   $CONTROL_BIN status
+  $CONTROL_BIN version
 
 安装目录: $INSTALL_DIR
 状态目录: $STATE_DIR
@@ -81,7 +85,7 @@ resolve_command() {
     local invoked
     invoked="$(basename "$0")"
     case "$invoked" in
-      install|upgrade|update|start|stop|restart|status|open|logs|uninstall|remove|help|-h|--help)
+      install|upgrade|update|start|stop|restart|status|open|logs|version|uninstall|remove|help|-h|--help)
         command="$invoked"
         ;;
       *)
@@ -109,6 +113,59 @@ check_git() {
   fi
 }
 
+trim_version() {
+  sed -n '1p' | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+version_from_dir() {
+  local dir="$1"
+  if [ -f "$dir/VERSION" ]; then
+    trim_version <"$dir/VERSION"
+  fi
+}
+
+installed_version() {
+  local version
+  version="$(version_from_dir "$INSTALL_DIR")"
+  if [ -n "$version" ]; then
+    echo "$version"
+    return 0
+  fi
+  if [ -f "$STATE_VERSION_FILE" ]; then
+    version="$(trim_version <"$STATE_VERSION_FILE")"
+    if [ -n "$version" ]; then
+      echo "$version"
+      return 0
+    fi
+  fi
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    local rev
+    rev="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    if [ -n "$rev" ]; then
+      echo "未知旧版本($rev)"
+    else
+      echo "未知旧版本"
+    fi
+    return 0
+  fi
+  echo "未安装"
+}
+
+remote_version() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$REMOTE_VERSION_URL" 2>/dev/null | trim_version || true
+  fi
+}
+
+save_installed_version() {
+  ensure_state_dirs
+  local version
+  version="$(version_from_dir "$INSTALL_DIR")"
+  if [ -n "$version" ]; then
+    echo "$version" >"$STATE_VERSION_FILE"
+  fi
+}
+
 ensure_checkout() {
   check_git
   ensure_state_dirs
@@ -122,19 +179,38 @@ ensure_checkout() {
 
   info "正在安装游戏..."
   run_quiet "克隆游戏" git clone --quiet "$REPO_URL" "$INSTALL_DIR"
+  save_installed_version
 }
 
 update_checkout() {
   check_git
   ensure_state_dirs
+  local before
+  local latest
+  before="$(installed_version)"
+  latest="$(remote_version)"
+  if [ -n "$latest" ]; then
+    info "当前版本: $before，最新版本: $latest"
+  else
+    info "当前版本: $before"
+  fi
 
   if [ ! -d "$INSTALL_DIR/.git" ]; then
     ensure_checkout
+    info "已安装版本: $(installed_version)"
     return 0
   fi
 
   info "正在更新游戏..."
   run_quiet "更新代码" git -C "$INSTALL_DIR" pull --ff-only --quiet
+  save_installed_version
+  local after
+  after="$(installed_version)"
+  if [ "$before" = "$after" ]; then
+    info "版本已是最新: $after"
+  else
+    info "版本已更新: $before -> $after"
+  fi
 }
 
 setup_runtime() {
@@ -149,6 +225,7 @@ setup_runtime() {
   info "检查依赖..."
   PIP_DISABLE_PIP_VERSION_CHECK=1 run_quiet "安装依赖" \
     "$INSTALL_DIR/.venv/bin/python" -m pip install --disable-pip-version-check -q -r "$INSTALL_DIR/requirements.txt"
+  save_installed_version
 }
 
 install_control_command() {
@@ -347,6 +424,20 @@ restart_server() {
   start_server
 }
 
+print_versions() {
+  ensure_state_dirs
+  local current
+  local latest
+  current="$(installed_version)"
+  latest="$(remote_version)"
+  echo "当前版本: $current"
+  if [ -n "$latest" ]; then
+    echo "最新版本: $latest"
+  else
+    echo "最新版本: 未知（无法读取远端 VERSION）"
+  fi
+}
+
 status_server() {
   ensure_state_dirs
   local pid
@@ -356,6 +447,7 @@ status_server() {
   else
     warn "游戏服务未运行"
   fi
+  echo "版本: $(installed_version)"
   echo "网页地址: $URL"
   echo "安装目录: $INSTALL_DIR"
   echo "状态目录: $STATE_DIR"
@@ -407,6 +499,9 @@ case "$COMMAND" in
     ;;
   logs)
     show_logs
+    ;;
+  version)
+    print_versions
     ;;
   uninstall|remove)
     uninstall_game

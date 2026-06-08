@@ -250,19 +250,30 @@
       while (pending.length && pending[0].seq <= ackSeq) pending.shift();
       const predictedX = player.x;
       const predictedY = player.y;
-      player.x = authoritative.x;
-      player.y = authoritative.y;
-      player.vx = authoritative.vx || 0;
-      player.vy = authoritative.vy || 0;
-      replay(player, obstacles);
-      const dx = player.x - predictedX;
-      const dy = player.y - predictedY;
+      const target = {
+        x: authoritative.x,
+        y: authoritative.y,
+        vx: authoritative.vx || 0,
+        vy: authoritative.vy || 0,
+      };
+      replay(target, obstacles);
+      const dx = target.x - predictedX;
+      const dy = target.y - predictedY;
       const error = Math.hypot(dx, dy);
       let mode = 'none';
       if (error > cfg.hardSnap) {
         mode = 'hard';
+        player.x = target.x;
+        player.y = target.y;
+        player.vx = target.vx || 0;
+        player.vy = target.vy || 0;
       } else if (error > cfg.softSnap) {
         mode = 'soft';
+        const factor = Math.max(0, Math.min(1, cfg.softFactor || 0.12));
+        player.x = predictedX + dx * factor;
+        player.y = predictedY + dy * factor;
+        player.vx = (player.vx || 0) + ((target.vx || 0) - (player.vx || 0)) * factor;
+        player.vy = (player.vy || 0) + ((target.vy || 0) - (player.vy || 0)) * factor;
       }
       return {
         error,
