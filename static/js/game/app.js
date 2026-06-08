@@ -101,7 +101,7 @@ let interactReq = false;
 let reloadReq = false;
 let fireReq = false;
 let weaponReq = '';
-let inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+let inventoryOpen = false;
 let inputDirty = false;
 let inputSeq = 0;
 let lastInputAt = 0;
@@ -1476,7 +1476,9 @@ function setupSocket() {
     fireReq = false;
     weaponReq = '';
     inputDirty = true;
-    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+    inventoryOpen = false;
+    gamePaused = false;
+    ui.setPaused(false);
     ui.setInventoryOpen(false);
     ui.setIntermission(state.intermission, me);
     if (data?.ending) audio.stage(true);
@@ -1614,7 +1616,9 @@ function setupSocket() {
     ui.notify(data.reason || '当前不能重开本关', data.col || '#ffc247');
   });
   sock.on('game_restart', () => {
-    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+    inventoryOpen = false;
+    gamePaused = false;
+    ui.setPaused(false);
     maxLevelNotified = false;
     hintedTypes.clear();
     ui.setInventoryOpen(false);
@@ -1631,7 +1635,9 @@ function setupSocket() {
   sock.on('disconnect', () => {
     joined = false;
     joining = false;
-    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+    inventoryOpen = false;
+    gamePaused = false;
+    ui.setPaused(false);
     ui.setInventoryOpen(false);
     ui.setIntermission(null);
     predictor.clear();
@@ -1642,7 +1648,9 @@ function setupSocket() {
 
 function joinGame() {
   if (joining) return;
-  inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+  inventoryOpen = false;
+    gamePaused = false;
+    ui.setPaused(false);
   ui.setInventoryOpen(false);
   audio.unlock();
   ui.setAudioOn(audio.enabled);
@@ -1670,7 +1678,9 @@ function restartStage() {
   }
   const s = ensureSocket();
   if (!s) return;
-  inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
+  inventoryOpen = false;
+    gamePaused = false;
+    ui.setPaused(false);
   ui.setInventoryOpen(false);
   clearInput();
   ui.notify('放弃本关，重新部署...', '#ffb1bd');
