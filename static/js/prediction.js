@@ -133,14 +133,12 @@
   function moveOnce(x, y, radius, dx, dy, mapW, mapH, obstacles) {
     let nx = Math.max(radius, Math.min(mapW - radius, x + dx));
     let ny = Math.max(radius, Math.min(mapH - radius, y + dy));
-    for (const o of nearObstacles(obstacles, nx, ny, radius + 90)) {
-      if (!circleRect(nx, ny, radius, o.x, o.y, o.w, o.h)) continue;
-      if (!circleRect(nx, y, radius, o.x, o.y, o.w, o.h)) ny = y;
-      else if (!circleRect(x, ny, radius, o.x, o.y, o.w, o.h)) nx = x;
-      else {
-        nx = x;
-        ny = y;
-      }
+    const near = nearObstacles(obstacles, nx, ny, radius + 90);
+    const hit = (tx, ty) => near.some((o) => circleRect(tx, ty, radius, o.x, o.y, o.w, o.h));
+    if (hit(nx, ny)) {
+      if (!hit(nx, y)) ny = y;
+      else if (!hit(x, ny)) nx = x;
+      else { nx = x; ny = y; }
     }
     return resolveOverlap(nx, ny, radius, mapW, mapH, obstacles);
   }
@@ -205,7 +203,12 @@
     function predict(player, input, dt, seq, obstacles) {
       const keys = input.keys || {};
       const velocity = integrateVelocity(player, input, dt, cfg);
-      if (!velocity.moving) return false;
+      if (!velocity.moving) {
+        const [rx, ry] = resolveOverlap(player.x, player.y, cfg.radius, cfg.mapW, cfg.mapH, obstacles);
+        player.x = rx;
+        player.y = ry;
+        return false;
+      }
       const [x, y] = moveWithCollision(
         player.x,
         player.y,

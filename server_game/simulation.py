@@ -1855,14 +1855,18 @@ class Game:
         mh = scene_def.get("mh", MAP_H)
         nx = max(radius, min(mw - radius, x + dx))
         ny = max(radius, min(mh - radius, y + dy))
-        for obstacle in self._near_obstacles(nx, ny, radius + MAZE_WALL + 4, scene=scene):
-            if circ_rect(nx, ny, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"]):
-                if not circ_rect(nx, y, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"]):
-                    ny = y
-                elif not circ_rect(x, ny, radius, obstacle["x"], obstacle["y"], obstacle["w"], obstacle["h"]):
-                    nx = x
-                else:
-                    nx, ny = x, y
+        near = list(self._near_obstacles(nx, ny, radius + MAZE_WALL + 4, scene=scene))
+
+        def _hit(tx, ty):
+            return any(circ_rect(tx, ty, radius, o["x"], o["y"], o["w"], o["h"]) for o in near)
+
+        if _hit(nx, ny):
+            if not _hit(nx, y):
+                ny = y
+            elif not _hit(x, ny):
+                nx = x
+            else:
+                nx, ny = x, y
         return self._resolve_obstacle_overlap(nx, ny, radius, scene)
 
     def _resolve_obstacle_overlap(self, x, y, radius, scene=SCENE_MAIN):
@@ -2960,6 +2964,7 @@ class Game:
         player["keys"] = {}
         player["shooting"] = False
         player["room_enter_cd"] = now + 0.9
+        player["room_hazard_grace_until"] = now + 10.0
         room["visited"] = True
         self._emit_scene_change(sid, reason="enter_room")
         self._emit_to("facility_pulse", {
@@ -3192,6 +3197,8 @@ class Game:
         dps = ROOM_HAZARD_DPS.get(effect, 0)
         if dps <= 0 or scene_id == SCENE_MAIN:
             return 0
+        if now < player.get("room_hazard_grace_until", 0):
+            return 0
         before = player.get("hp", 0)
         self._damage_player(
             sid,
@@ -3299,10 +3306,35 @@ class Game:
             hazard_suffix = ""
             if scene_id != SCENE_MAIN:
                 if effect in ROOM_HAZARD_DPS:
-                    self._apply_room_hazard(sid, player, scene_id, effect, dt, now)
-                    if player.get("dead"):
-                        continue
-                    hazard_suffix = " · 环境伤害"
+                    grace_until = player.get("room_hazard_grace_until", 0)
+                    _hazard_notice_cfg = {
+                        "lab":      ("辐射污染正在灼伤你，尽快完成任务撤离", "#b7ff47"),
+                        "archive":  ("空气污染正在侵蚀你，尽快完成任务撤离", "#ffcc44"),
+                        "security": ("电弧放电正在击伤你，尽快完成任务撤离", "#d98cff"),
+                        "morgue":   ("生化毒素正在侵蚀你，尽快完成任务撤离", "#ff8a98"),
+                    }
+                    if now < grace_until:
+                        remaining = max(1, math.ceil(grace_until - now))
+                        _msg, _col = _hazard_notice_cfg.get(effect, ("环境伤害即将开始", "#ffcc44"))
+                        self._facility_notice(
+                            player, now,
+                            f"⚠ {remaining}秒后开始持续受到环境伤害",
+                            "#ffcc44",
+                            repeat_after=1.0,
+                            notice_key="room_hazard_grace",
+                        )
+                        hazard_suffix = f" · {remaining}s后受到环境伤害"
+                    else:
+                        self._apply_room_hazard(sid, player, scene_id, effect, dt, now)
+                        if player.get("dead"):
+                            continue
+                        _msg, _col = _hazard_notice_cfg.get(effect, ("环境伤害持续中", "#ff8a98"))
+                        self._facility_notice(
+                            player, now, _msg, _col,
+                            repeat_after=3.5,
+                            notice_key="room_hazard_dmg",
+                        )
+                        hazard_suffix = " · 持续受到环境伤害"
 
             if effect == "medbay":
                 if room.get("searched"):
@@ -3578,14 +3610,6 @@ class Game:
         mag_size = player.get("mag_size", meta["mag_size"])
         reserve = self._ammo_reserve(player, ammo_type)
         if player.get("ammo", 0) >= mag_size or reserve <= 0:
-            if manual and now >= player.get("dry_until", 0):
-                player["dry_until"] = now + 0.45
-                payload = {
-                    "pid": sid,
-                    "ammo": player.get("ammo", 0),
-                }
-                payload.update(self._current_ammo_payload(player, ammo_type))
-                self._emit_to("ammo_empty", payload, [sid])
             return False
         player["shooting"] = False
         duration = meta.get("reload_seconds", RELOAD_SECONDS)
@@ -3760,17 +3784,7 @@ class Game:
             return
         ammo_cost = max(1, int(meta.get("ammo_cost", 1)))
         if player.get("ammo", 0) < ammo_cost:
-            if not self._try_reload(sid, player, now):
-                if now >= player.get("dry_until", 0):
-                    player["dry_until"] = now + 0.55
-                    payload = {
-                        "pid": sid,
-                        "ammo": player.get("ammo", 0),
-                        "weapon": wid,
-                        "weaponName": meta["name"],
-                    }
-                    payload.update(self._current_ammo_payload(player, ammo_type))
-                    self._emit_to("ammo_empty", payload, [sid])
+            self._try_reload(sid, player, now)
             return
         player["fire_cd"] = now + interval
         player["ammo"] = max(0, player.get("ammo", 0) - ammo_cost)
@@ -4110,7 +4124,7 @@ class Game:
             return None
         return min(candidates, key=lambda item: item[0])[1]
 
-    def _steer_zombie(self, zombie, target, speed, dt):
+    def _steer_zombie(self, zombie, target, speed, dt, now=0.0):
         dx = target["x"] - zombie["x"]
         dy = target["y"] - zombie["y"]
         dist = math.hypot(dx, dy)
@@ -4128,6 +4142,14 @@ class Game:
         if not blocked:
             zombie["avoid_side"] = 0
             zombie["stuck_for"] = 0
+            if dist > 80:
+                wander_phase = (hash(zombie.get("id", 0)) & 0x3FF) * (math.pi * 2 / 1024)
+                wander = 0.18 * math.sin(now * 0.85 + wander_phase)
+                wvx = math.cos(base_angle + wander) * speed
+                wvy = math.sin(base_angle + wander) * speed
+                wx, wy = self.move_col(zombie["x"], zombie["y"], zombie["radius"], wvx * dt, wvy * dt, scene=scene)
+                if math.hypot(wx - zombie["x"], wy - zombie["y"]) >= step * 0.68:
+                    return wvx, wvy, wx, wy, dist
             return direct_vx, direct_vy, direct_x, direct_y, dist
 
         side = zombie.get("avoid_side") or (1 if zombie.get("id", 0) % 2 else -1)
@@ -4663,7 +4685,7 @@ class Game:
                     speed *= 1.18
             speed = self._maybe_leap_speed(zombie, target, speed, dist_to_target, now)
             waypoint = self._zombie_waypoint(zombie, target, now)
-            vx, vy, nx, ny, dist = self._steer_zombie(zombie, waypoint, speed, dt)
+            vx, vy, nx, ny, dist = self._steer_zombie(zombie, waypoint, speed, dt, now)
             zombie["target"] = target["id"]
             zombie["vx"] = vx
             zombie["vy"] = vy

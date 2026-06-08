@@ -675,7 +675,7 @@ class GameCoreTest(unittest.TestCase):
         game.pending_fog_spawns.clear()
         player["hp"] = 80
 
-        game._apply_facility_effects(FACILITY_SEARCH_SECONDS, now + 1.0)
+        game._apply_facility_effects(FACILITY_SEARCH_SECONDS, now + 11.0)
 
         self.assertTrue(room["searched"])
         self.assertTrue(
@@ -881,12 +881,12 @@ class GameCoreTest(unittest.TestCase):
         room["alarm_spawned"] = True
         game.pending_fog_spawns.clear()
 
-        game._apply_facility_effects(1.0, now + 2.0)
+        game._apply_facility_effects(1.0, now + 11.0)
 
         self.assertLess(player["hp"], 80)
         hp_after_room = player["hp"]
         player["scene"] = SCENE_MAIN
-        game._apply_room_hazard("p1", player, scene_id, "lab", 1.0, now + 3.0)
+        game._apply_room_hazard("p1", player, scene_id, "lab", 1.0, now + 12.0)
 
         self.assertEqual(player["hp"], hp_after_room)
 
@@ -2554,7 +2554,7 @@ class GameCoreTest(unittest.TestCase):
         )
         self.assertEqual(
             [entry.get("scene") for entry in game.pending_fog_spawns],
-            [scene_id, SCENE_MAIN],
+            [SCENE_MAIN],
         )
 
     def test_mixed_fog_queue_allows_independent_room_budgets(self):
