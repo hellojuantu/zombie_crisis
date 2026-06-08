@@ -2,19 +2,38 @@
 
 一个轻量的多人联机恐怖撤离生存游戏。
 
-![恐怖首页](docs/screenshots/lobby.png)
+![核心游戏画面](docs/screenshots/gameplay.png)
 
 ## 快速开始
 
 > 需要 Python 3.10+ 和 git
 
-**一键安装 / 升级并启动（已安装过会自动 git pull）：**
+**一键安装 / 更新并启动（已安装过会自动拉取最新代码）：**
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hellojuantu/zombie_crisis/refs/heads/main/install.sh)"
 ```
 
-启动后自动打开浏览器，或手动访问：
+安装器会创建本地管理目录 `~/.zombie_crisis`，服务日志和安装日志也会放在这里。
+
+**后续管理：**
+
+```bash
+~/.zombie_crisis/bin/zombie-crisis start
+~/.zombie_crisis/bin/zombie-crisis stop
+~/.zombie_crisis/bin/zombie-crisis restart
+~/.zombie_crisis/bin/zombie-crisis status
+~/.zombie_crisis/bin/zombie-crisis logs
+```
+
+**远程升级 / 卸载：**
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hellojuantu/zombie_crisis/refs/heads/main/install.sh)" -- upgrade
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hellojuantu/zombie_crisis/refs/heads/main/install.sh)" -- uninstall
+```
+
+服务启动就绪后会自动打开浏览器，或手动访问：
 
 | 模式 | 地址 |
 |---|---|
@@ -67,14 +86,6 @@ http://你的局域网IP:8080/
 - 连杀 10/20/30 获得短时射速/三连发/护盾加成
 - 波次逐步解锁爬行者、重型、毒性、装甲、跳扑、尖啸、爆裂体等精英
 - 第 3/6/9… 关出现 Boss，通关 6 关后揭露主线结局并进入无尽层
-
----
-
-## 截图
-
-![设施探索](docs/screenshots/gameplay.png)
-![无敌保护状态](docs/screenshots/invincible.png)
-![背包与撤离条件](docs/screenshots/inventory.png)
 
 ---
 
