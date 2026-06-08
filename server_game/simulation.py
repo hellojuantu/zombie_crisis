@@ -79,6 +79,7 @@ from .config import (
     MATERIAL_PICKUP_MIN,
     MAX_BULLETS,
     MAX_ITEMS,
+    MAX_PLAYERS,
     MAX_RESERVE_BY_TYPE,
     MAX_PISTOL_RESERVE,
     MAX_SYNC_BULLETS_PER_CLIENT,
@@ -301,6 +302,7 @@ class Game:
     def __init__(self, emitter=None):
         self.emit = emitter
         self.players = {}
+        self._peak_players = 1
         self.zombies = {}
         self.bullets = {}
         self.items = {}
@@ -358,14 +360,23 @@ class Game:
         self._room_path_recomputes_this_tick = 0
         self._gen_obstacles()
         self._start_stage_tasks()
-        for _ in range(min(INITIAL_ZOMBIES, self.wave_remaining)):
+        alive = max(1, sum(1 for p in self.players.values() if not p.get("dead") and not p.get("paused")))
+        scale = 0.4 + 0.6 * alive / MAX_PLAYERS
+        initial_count = min(int((INITIAL_ZOMBIES + self.wave * 4) * scale), self.wave_remaining)
+        for _ in range(initial_count):
             if self.spawn_zombie(emit=False):
                 self.wave_remaining -= 1
-        for _ in range(INITIAL_ITEMS):
+        for _ in range(INITIAL_ITEMS * self._peak_players):
             self.spawn_item(emit=False)
 
+    @property
+    def _max_items(self):
+        return MAX_ITEMS * self._peak_players
+
     def _wave_budget(self):
-        return WAVE_BASE + (self.wave - 1) * WAVE_STEP
+        base = WAVE_BASE + (self.wave - 1) * WAVE_STEP
+        alive = max(1, sum(1 for p in self.players.values() if not p.get("dead")))
+        return max(1, int(base * (0.4 + 0.6 * alive / MAX_PLAYERS)))
 
     def _infection_source_budget(self):
         return min(INFECTION_SOURCE_MAX, INFECTION_SOURCE_BASE + (self.wave - 1) * INFECTION_SOURCE_STEP)
@@ -570,7 +581,7 @@ class Game:
         self.extractions = self._new_extractions()
         self.mission = self.extractions[0] if self.extractions else None
         fuse_goal = max((exit_point.get("requires", {}).get("fuse", 0) for exit_point in self.extractions), default=0)
-        fuse_spawns = min(TASK_PICKUPS_PER_STAGE + (1 if self.wave <= 2 else 0), max(2, fuse_goal + 1))
+        fuse_spawns = min(TASK_PICKUPS_PER_STAGE - (1 if self.wave <= 2 else 0), max(2, fuse_goal + 1))
         for _ in range(fuse_spawns):
             self.spawn_item(item_type="fuse", emit=False)
         if (self.stage_director or {}).get("focus") == "sample":
@@ -765,8 +776,16 @@ class Game:
             "talents": self._talent_snapshot(player),
         }
 
-    def _player_speed(self, player):
-        return player_speed(player.get("level", 1)) + talent_level(player, "agility") * 12
+    def _player_speed(self, player, now=0.0):
+        base = player_speed(player.get("level", 1)) + talent_level(player, "agility") * 12
+        if now > 0:
+            boost = 1.0
+            if now < player.get("levelup_boost_until", 0):
+                boost = max(boost, 1.22)
+            if now < player.get("adrenaline_until", 0):
+                boost = max(boost, 1.40)
+            base *= boost
+        return base
 
     def _max_reserve_for_player(self, player, ammo_type="pistol"):
         base = MAX_RESERVE_BY_TYPE.get(ammo_type, MAX_PISTOL_RESERVE)
@@ -2495,7 +2514,7 @@ class Game:
         return zid
 
     def spawn_item(self, x=None, y=None, item_type=None, emit=True, scene=SCENE_MAIN, force=False):
-        if len(self.items) >= MAX_ITEMS and not force:
+        if len(self.items) >= self._max_items and not force:
             return None
         if x is None:
             x, y = self.safe_spawn(scene=scene)
@@ -2573,6 +2592,7 @@ class Game:
             "level": player["level"],
         }, [sid])
         if leveled:
+            player["levelup_boost_until"] = now + 2.0
             self._emit("level_up", {
                 "pid": sid,
                 "level": player["level"],
@@ -2762,6 +2782,10 @@ class Game:
                 "col": item["color"],
                 "sceneId": self._entity_scene(item),
             }, [sid])
+        elif typ == "adrenaline":
+            player["adrenaline_until"] = now + 8.0
+        elif typ == "damage_boost":
+            player["damage_boost_until"] = now + 8.0
         elif typ == "nuke":
             self._nuke(sid, item["x"], item["y"], now)
         elif typ.startswith("weapon_"):
@@ -2826,7 +2850,7 @@ class Game:
         )
 
     def _try_drop_item(self, x, y, zombie=None):
-        if len(self.items) >= MAX_ITEMS:
+        if len(self.items) >= self._max_items:
             return
         ztype = (zombie or {}).get("type")
         scene = self._entity_scene(zombie or {})
@@ -2851,7 +2875,7 @@ class Game:
             self.spawn_item(x, y, scene=scene)
 
     def _try_drop_task_item(self, zombie, now=None):
-        if len(self.items) >= MAX_ITEMS:
+        if len(self.items) >= self._max_items:
             return
         ztype = zombie.get("type")
         item_type = None
@@ -2859,9 +2883,11 @@ class Game:
             zombie.get("x", 0), zombie.get("y", 0), "lab", padding=110
         )
         if ztype in ("toxic", "screamer", "bloater"):
-            item_type = "sample" if random.random() < (0.9 if lab_boost else 0.78) else None
+            item_type = "sample" if random.random() < (0.55 if lab_boost else 0.40) else None
         elif ztype in ("runner", "brute", "armored", "boss"):
             item_type = "keycard" if random.random() < (0.55 if ztype != "runner" else 0.28) else None
+        elif random.random() < 0.08 and not any(i.get("type") == "keycard" for i in self.items.values()):
+            item_type = "keycard"
         elif random.random() < TASK_DROP_CHANCE * (0.92 if lab_boost else 0.42):
             item_type = "sample"
         if item_type:
@@ -3019,7 +3045,7 @@ class Game:
         return math.hypot(player["x"] - exit_point.get("x", 0), player["y"] - exit_point.get("y", 0)) <= exit_point.get("radius", ROOM_DOOR_RADIUS) + PLAYER_R
 
     def _make_item_room_for_facility(self):
-        while len(self.items) >= MAX_ITEMS:
+        while len(self.items) >= self._max_items:
             removable = next(
                 (
                     iid for iid, item in self.items.items()
@@ -3738,11 +3764,11 @@ class Game:
         dist = math.hypot(dx, dy) or 1.0
         ux = dx / dist
         uy = dy / dist
-        damage = (
+        damage = round((
             MELEE_DAMAGE
             + max(0, player.get("level", 1) - 1)
             + max(0, player.get("weapon_level", 1) - 1) * 2
-        )
+        ) * (1.5 if now < player.get("damage_boost_until", 0) else 1.0), 1)
         player["melee_cd"] = now + MELEE_COOLDOWN
         player["last_melee_at"] = now
         zombie["hp"] -= damage
@@ -3837,12 +3863,12 @@ class Game:
                 "vy": math.sin(angle) * speed,
                 "radius": meta.get("bullet_radius", BULLET_R),
                 "life": meta.get("bullet_life", BULLET_LIFE),
-                "damage": (
+                "damage": round((
                     meta.get("damage", BULLET_DAMAGE)
                     + max(0, player.get("level", 1) - 1) * 2
                     + max(0, player.get("weapon_level", 1) - 1) * 3
                     + min(18, (player.get("combo", 0) // 5) * 2)
-                ),
+                ) * (1.5 if now < player.get("damage_boost_until", 0) else 1.0), 1),
                 "explosion_radius": meta.get("explosion_radius", 0),
                 "explosion_damage": meta.get("explosion_damage", meta.get("damage", BULLET_DAMAGE)),
                 "boss_damage_mult": meta.get("boss_damage_mult", 1.0),
@@ -3953,6 +3979,14 @@ class Game:
             "col": meta["color"],
             "reason": reason,
         }, zombie["x"], zombie["y"], include=sid, scene=self._entity_scene(zombie))
+        killer = self.players.get(sid)
+        if killer and killer.get("kills") == 1:
+            self._emit_to("first_blood", {
+                "pid": sid,
+                "x": round(zombie["x"], 1),
+                "y": round(zombie["y"], 1),
+                "sceneId": self._entity_scene(zombie),
+            }, [sid])
         if zombie["type"] == "bloater":
             self._explode_bloater(sid, zid, zombie, now)
         self._try_drop_task_item(zombie, now)
@@ -4079,7 +4113,7 @@ class Game:
             self._finish_reload(player, now)
 
             dx, dy = self._input_dir(player.get("keys", {}))
-            speed = self._player_speed(player)
+            speed = self._player_speed(player, now)
             vehicle_active = now < player.get("vehicle_until", 0)
             if vehicle_active:
                 speed *= VEHICLE_SPEED_MULT
@@ -4458,6 +4492,7 @@ class Game:
             "x": round(exit_point["x"], 1),
             "y": round(exit_point["y"], 1),
             "sceneId": SCENE_MAIN,
+            "boss_next": self._is_boss_wave(cleared_stage + 1),
         })
         self.wave += 1
         self.wave_remaining = self._wave_budget()
@@ -4508,7 +4543,7 @@ class Game:
             if self.spawn_zombie(emit=False, pressure=True):
                 self.wave_remaining -= 1
         self._spawn_wave_burst()
-        for _ in range(INITIAL_ITEMS):
+        for _ in range(INITIAL_ITEMS * self._peak_players):
             self.spawn_item(emit=False)
         if route_reward and route_reward.get("route") == "service":
             for _ in range(min(3, 1 + len(self.players))):
@@ -4852,8 +4887,9 @@ class Game:
             return
         if self._pending_fog_spawn_count():
             return
+        spawn_dt = ZOMBIE_SPAWN_DT * (0.72 if self.wave == 1 else 1.0)
         self.zombie_spawn_timer += dt
-        if self.zombie_spawn_timer < ZOMBIE_SPAWN_DT:
+        if self.zombie_spawn_timer < spawn_dt:
             return
         self.zombie_spawn_timer = 0.0
         alive_count = sum(
@@ -4879,7 +4915,7 @@ class Game:
         if self.item_spawn_timer < ITEM_SPAWN_DT:
             return
         self.item_spawn_timer = 0.0
-        if len(self.items) < max(4, MAX_ITEMS // 2):
+        if len(self.items) < max(4, self._max_items // 2):
             self.spawn_item()
 
     def _drop_stale_inputs(self, now):
@@ -4956,7 +4992,7 @@ class Game:
             if self.spawn_zombie(emit=False, pressure=True):
                 self.wave_remaining -= 1
         self._spawn_wave_burst()
-        for _ in range(INITIAL_ITEMS):
+        for _ in range(INITIAL_ITEMS * self._peak_players):
             self.spawn_item(emit=False)
         scene_payload = self._scene_payload(SCENE_MAIN)
         # stage_failed reasons: wipe=deployment exhausted, abandon=player chose to restart,
@@ -5046,6 +5082,8 @@ class Game:
             player["last_input"] = now
             player["last_seen"] = now
             return player["idx"], player["x"], player["y"]
+        if len(self.players) >= MAX_PLAYERS:
+            return None, None, None
         used = {p["idx"] for p in self.players.values()}
         idx = 0
         while idx in used:
@@ -5121,46 +5159,8 @@ class Game:
             "last_input": now,
             "last_seen": now,
         }
+        self._peak_players = max(self._peak_players, len(self.players))
         return idx, sx, sy
-
-    def claim_single_player(self, sid):
-        if sid in self.players:
-            idx, sx, sy = self.add_player(sid)
-            return idx, sx, sy, None
-        if not self.players:
-            idx, sx, sy = self.add_player(sid)
-            return idx, sx, sy, None
-
-        old_sid = next(iter(self.players))
-        player = self.players.pop(old_sid)
-        now = self._now()
-        player["id"] = sid
-        player["last_input"] = now
-        player["last_seen"] = now
-        player["input_seq"] = 0
-        player["ack_seq"] = 0
-        player["keys"] = {}
-        player["shooting"] = False
-        player["fire_requested"] = False
-        player["interact_requested"] = False
-        player["paused"] = False
-        player["vx"] = 0
-        player["vy"] = 0
-        self.players[sid] = player
-
-        for bullet in self.bullets.values():
-            if bullet.get("owner") == old_sid:
-                bullet["owner"] = sid
-        if self.intermission:
-            self.intermission["players"] = [
-                sid if pid == old_sid else pid
-                for pid in self.intermission.get("players", [])
-            ]
-            self.intermission["ready"] = [
-                sid if pid == old_sid else pid
-                for pid in self.intermission.get("ready", [])
-            ]
-        return player["idx"], player["x"], player["y"], old_sid
 
     def remove_player(self, sid):
         removed = sid in self.players
@@ -5268,7 +5268,7 @@ class Game:
         player["hp"] = hp
         wid, meta, _ = self._sync_weapon_fields(player)
         vehicle_left = max(0, player.get("vehicle_until", 0) - now)
-        current_speed = self._player_speed(player) * (VEHICLE_SPEED_MULT if vehicle_left > 0 else 1)
+        current_speed = self._player_speed(player, now) * (VEHICLE_SPEED_MULT if vehicle_left > 0 else 1)
         return [
             round(player["x"], 1),
             round(player["y"], 1),

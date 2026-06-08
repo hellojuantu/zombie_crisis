@@ -32,7 +32,7 @@ SNAPSHOT_HZ = 20
 SNAPSHOT_DT = 1 / SNAPSHOT_HZ
 INPUT_IDLE_TIMEOUT = 0.55
 PLAYER_STALE_TIMEOUT = 5.0
-MAX_PLAYERS_SOFT = 100
+MAX_PLAYERS = 4
 
 SPATIAL_CELL = 150
 INTEREST_RADIUS = 1450
@@ -210,7 +210,7 @@ FACILITY_MED_HEAL_PER_SEC = 8
 FACILITY_TOXIC_DAMAGE_PER_SEC = 8
 
 MAX_ZOMBIES = 220
-INITIAL_ZOMBIES = 48
+INITIAL_ZOMBIES = 20
 ZOMBIE_SPAWN_DT = 0.12
 WAVE_BASE = 92
 WAVE_STEP = 24
@@ -290,7 +290,7 @@ ITEM_SPAWN_DT = 13.5
 NUKE_RADIUS = 440
 
 LEVEL_XP_BASE = 90
-COMBO_WINDOW = 3.6
+COMBO_WINDOW = 5.0
 COMBO_RAPID_BONUS_AT = 10
 COMBO_SPREAD_BONUS_AT = 20
 COMBO_SHIELD_BONUS_AT = 30
@@ -454,6 +454,8 @@ ITEM_TYPES = {
     "ammo_explosive": {"color": "#ff8844", "icon": "EX", "name": "爆破弹药", "weight": 0, "ammo_type": "explosive"},
     "parts": {"color": "#8fd0ff", "icon": "P", "name": "武器零件", "weight": 2},
     "nuke": {"color": "#ff8844", "icon": "!", "name": "清场炸弹", "weight": 1},
+    "adrenaline": {"color": "#ff9922", "icon": "↑", "name": "肾上腺素", "weight": 2},
+    "damage_boost": {"color": "#ff4466", "icon": "D+", "name": "强化弹头", "weight": 1},
     "weapon_rifle": {"color": "#8fd0ff", "icon": "AR", "name": "步枪箱", "weight": 0, "weapon": "rifle"},
     "weapon_shotgun": {"color": "#ffc247", "icon": "SG", "name": "散弹枪箱", "weight": 0, "weapon": "shotgun"},
     "weapon_smg": {"color": "#48f0a0", "icon": "SMG", "name": "冲锋枪箱", "weight": 0, "weapon": "smg"},

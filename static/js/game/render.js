@@ -1021,10 +1021,30 @@ export function createRenderer(canvas, minimap) {
       mini.fillStyle = z.color || '#6bd36b';
       mini.fillRect(z.x * sx - 1, z.y * sy - 1, 2, 2);
     }
+    const OBJECTIVE_TYPES = new Set(['fuse', 'sample', 'keycard', 'lore']);
     for (const item of Object.values(state.items)) {
-      if ((item.x - px) ** 2 + (item.y - py) ** 2 > vision * vision) continue;
-      mini.fillStyle = item.color;
-      mini.fillRect(item.x * sx - 1, item.y * sy - 1, 2, 2);
+      const inVision = (item.x - px) ** 2 + (item.y - py) ** 2 <= vision * vision;
+      const isObjective = OBJECTIVE_TYPES.has(item.type);
+      if (inVision) {
+        mini.fillStyle = item.color;
+        mini.fillRect(item.x * sx - 1, item.y * sy - 1, 2, 2);
+      }
+      if (isObjective && !inVision) {
+        const mx = item.x * sx;
+        const my = item.y * sy;
+        const cx = mw / 2;
+        const cy = mh / 2;
+        const angle = Math.atan2(my - cy, mx - cx);
+        const r = Math.min(cx, cy) - 6;
+        const ex = cx + Math.cos(angle) * r;
+        const ey = cy + Math.sin(angle) * r;
+        mini.fillStyle = item.color;
+        mini.beginPath();
+        mini.moveTo(ex + Math.cos(angle) * 5, ey + Math.sin(angle) * 5);
+        mini.lineTo(ex + Math.cos(angle + 2.4) * 5, ey + Math.sin(angle + 2.4) * 5);
+        mini.lineTo(ex + Math.cos(angle - 2.4) * 5, ey + Math.sin(angle - 2.4) * 5);
+        mini.fill();
+      }
     }
     for (const p of Object.values(state.pl)) {
       mini.fillStyle = p.dead ? hexrgba(p.color, 0.3) : p.color;

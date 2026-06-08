@@ -79,6 +79,16 @@ let socketReady = false;
 let joining = false;
 let joined = false;
 let myId = null;
+let maxLevelNotified = false;
+const hintedTypes = new Set();
+const ITEM_HINTS = {
+  parts:        '整备时可升级天赋',
+  lore:         '收集解锁故事线索',
+  nuke:         '拾取后自动引爆，清除周围感染体',
+  adrenaline:   '移速+40%，持续8秒',
+  damage_boost: '伤害+50%，持续8秒',
+  shield:       '对周围队友共享护盾',
+};
 let myCol = '#ffffff';
 let myNm = '幸存者';
 let keys = {};
@@ -812,6 +822,11 @@ function setupSocket() {
     delete pingSent[data.seq];
     updateLatency(performance.now() - sent);
   });
+  sock.on('join_error', (data) => {
+    if (data.reason === 'full') {
+      ui.notify('房间已满', '#ff4d7a');
+    }
+  });
   sock.on('init', (data) => {
     myId = data.id;
     myCol = data.col;
@@ -1102,8 +1117,13 @@ function setupSocket() {
       radius: playerRadius,
       speed: playerSpeed,
     });
+    ui.notify(`${data.nm || '玩家'} 加入`, data.col || '#aee6ff');
   });
-  sock.on('p_leave', (data) => delete state.pl[data.pid]);
+  sock.on('p_leave', (data) => {
+    const name = state.pl[data.pid]?.name;
+    delete state.pl[data.pid];
+    if (name) ui.notify(`${name} 离开`, '#aeb7c2');
+  });
   sock.on('z_spawn', (data) => {
     if (!sceneMatches(data)) return;
     const z = {
@@ -1230,10 +1250,11 @@ function setupSocket() {
     if (data.type === 'rapid') me.rapid = true;
     if (data.type === 'spread') me.spread = true;
     if (data.type === 'shield') me.prot = true;
+    const tier = data.combo >= 30 ? 3 : data.combo >= 20 ? 2 : 1;
     ui.notify(`${data.name} x${data.combo}`, data.col || '#ffc247');
-    effects.ring(data.x, data.y, 78, data.col || '#ffc247', 0.48, 4);
+    effects.ring(data.x, data.y, 60 + tier * 30, data.col || '#ffc247', 0.5 + tier * 0.15, 3 + tier);
     effects.particlesAt(data.x, data.y, data.col || '#ffc247', 24, 170, 0.42, 3.2);
-    audio.reward();
+    audio.comboMilestone(tier);
   });
   sock.on('task_update', (data) => {
     if (!sceneMatches(data)) return;
@@ -1270,7 +1291,14 @@ function setupSocket() {
       me.vehicle = Boolean(data.vehicle);
       const suffix = data.amount && data.amount > 1 ? ` +${data.amount}` : '';
       markTraining('objective');
-      if (shouldNotifyPickup(data)) ui.notify(`获得 ${data.name}${suffix}`, data.col || '#fff');
+      if (shouldNotifyPickup(data)) {
+        ui.notify(`获得 ${data.name}${suffix}`, data.col || '#fff');
+        const hint = ITEM_HINTS[data.type];
+        if (hint && !hintedTypes.has(data.type)) {
+          hintedTypes.add(data.type);
+          setTimeout(() => ui.notify(hint, '#aaaaaa'), 320);
+        }
+      }
       audio.pickup();
     }
   });
@@ -1317,7 +1345,6 @@ function setupSocket() {
     applyWeaponEvent(data);
     state.intermission = data.intermission || state.intermission;
     ui.setIntermission(state.intermission, me);
-    ui.notify(`${data.name || '天赋'} Lv.${data.level}`, data.col || '#48f0a0');
     ui.setIntermissionFeedback(`${data.name || '天赋'} 已升级到 Lv.${data.level}`, data.col || '#48f0a0');
     effects.ring(data.x, data.y, 82, data.col || '#48f0a0', 0.5, 4);
     audio.reward();
@@ -1518,8 +1545,21 @@ function setupSocket() {
       me.level = data.level;
       me.maxHp = hpMaxForLevel(data.level);
       ui.notify(`升级 Lv.${data.level}`, data.col || '#44ffaa');
+      audio.levelUp();
+      if (data.level >= 12 && !maxLevelNotified) {
+        maxLevelNotified = true;
+        setTimeout(() => ui.notify('属性已满级', '#aaaaaa'), 600);
+      }
     }
-    effects.ring(data.x, data.y, 90, data.col || '#44ffaa', 0.7, 4);
+    effects.ring(data.x, data.y, 120, data.col || '#44ffaa', 0.9, 6);
+    effects.particlesAt(data.x, data.y, data.col || '#44ffaa', 30, 200, 0.55, 4);
+  });
+  sock.on('first_blood', (data) => {
+    if (data.pid !== myId) return;
+    effects.particlesAt(data.x, data.y, me.col || '#ff4d7a', 40, 280, 0.6, 4);
+    effects.ring(data.x, data.y, 80, '#ff4d7a', 0.8, 5);
+    ui.notify('首次击杀', '#ff4d7a');
+    audio.firstBlood();
   });
   sock.on('wave_start', (data) => {
     state.intermission = null;
@@ -1546,14 +1586,17 @@ function setupSocket() {
     if (!sceneMatches(data)) return;
     ui.notify(`第 ${data.wave} 关撤离`, '#48f0a0');
     audio.extract();
+    if (data.boss_next) {
+      setTimeout(() => {
+        ui.notify('⚠ 预警：下一波存在重型变异体', '#ff4d7a');
+        audio.dread(1.4);
+      }, 800);
+    }
   });
   sock.on('wave_reward', (data) => {
     if (data.pid !== myId) return;
     me.hp = data.hp;
     me.prot = true;
-    ui.notify('波次奖励', data.col || '#48f0a0');
-    effects.ring(data.x, data.y, 62, data.col || '#48f0a0', 0.46, 3);
-    audio.reward();
   });
   sock.on('stage_failed', (data) => {
     ui.notify(stageFailedMessage(data.wave || state.wave, data.reason), '#ff6666');
@@ -1571,6 +1614,8 @@ function setupSocket() {
   });
   sock.on('game_restart', () => {
     inventoryOpen = false;
+    maxLevelNotified = false;
+    hintedTypes.clear();
     ui.setInventoryOpen(false);
     ui.setIntermission(null);
     predictor.clear();

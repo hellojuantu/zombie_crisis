@@ -128,29 +128,33 @@ async def disconnect(sid, reason=None):
 @sio.on("join_game")
 async def on_join(sid, data):
     await start_background_tasks()
-    old_sid = None
     async with _game_lock:
         if not G.running:
             G.reset()
             G.emit = queue_emit
 
-        idx, sx, sy, old_sid = G.claim_single_player(sid)
-        G.running = True
-        init_data = G.get_init_data(sid, idx)
-        player = G.players[sid]
-        join_data = {
-            "pid": sid,
-            "x": sx,
-            "y": sy,
-            "col": player["color"],
-            "nm": player["name"],
-        }
-        events = drain_events()
+        idx, sx, sy = G.add_player(sid)
+        if idx is None:
+            events = drain_events()
+        else:
+            G.running = True
+            init_data = G.get_init_data(sid, idx)
+            player = G.players[sid]
+            join_data = {
+                "pid": sid,
+                "x": sx,
+                "y": sy,
+                "col": player["color"],
+                "nm": player["name"],
+            }
+            events = drain_events()
+    if idx is None:
+        await emit_events(events)
+        await sio.emit("join_error", {"reason": "full"}, to=sid)
+        return
     await emit_events(events)
     await sio.emit("init", init_data, to=sid)
     await sio.emit("p_join", join_data, to=sid)
-    if old_sid:
-        await sio.disconnect(old_sid)
 
 
 @sio.on("player_input")
@@ -205,7 +209,7 @@ async def on_restart(sid, data):
         G.reset(keep_players=True)
         G.emit = queue_emit
         if sid not in G.players:
-            G.claim_single_player(sid)
+            G.add_player(sid)
         G.running = True
         init_packets = [(pid, G.get_init_data(pid, p["idx"])) for pid, p in G.players.items()]
         events = drain_events()

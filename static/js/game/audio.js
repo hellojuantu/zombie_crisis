@@ -456,6 +456,35 @@ export function createAudio() {
     setTimeout(() => radioWhisper(1.2), 480);
   }
 
+  function firstBlood() {
+    slam(1.1);
+    toneAt(480, 0.06, 0.14, 'triangle', 0.07, 320);
+    toneAt(860, 0.1, 0.12, 'triangle', 0.055, 180);
+  }
+
+  function levelUp() {
+    tone(520, 0.09, 'triangle', 0.07, 200);
+    toneAt(780, 0.08, 0.1, 'triangle', 0.065, 140);
+    toneAt(1040, 0.08, 0.1, 'triangle', 0.055, 80);
+    filteredNoise(0.22, 0.03, 3200, 'highpass', 0.6);
+  }
+
+  function comboMilestone(tier = 1) {
+    if (tier >= 3) {
+      slam(0.9);
+      toneAt(640, 0.05, 0.15, 'triangle', 0.08, 280);
+      toneAt(960, 0.08, 0.13, 'triangle', 0.07, 160);
+      toneAt(1280, 0.11, 0.11, 'triangle', 0.06, 80);
+    } else if (tier === 2) {
+      toneAt(700, 0.04, 0.12, 'triangle', 0.07, 240);
+      toneAt(1050, 0.07, 0.11, 'triangle', 0.06, 120);
+      toneAt(1400, 0.1, 0.1, 'triangle', 0.05, 60);
+    } else {
+      tone(800, 0.09, 'triangle', 0.07, 200);
+      toneAt(1200, 0.07, 0.1, 'triangle', 0.055, 100);
+    }
+  }
+
   return {
     get enabled() {
       return enabled;
@@ -481,5 +510,9 @@ export function createAudio() {
     stage,
     reward,
     playerDeath,
+    dread,
+    firstBlood,
+    levelUp,
+    comboMilestone,
   };
 }
