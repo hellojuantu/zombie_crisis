@@ -390,26 +390,6 @@ export function createRenderer(canvas, minimap) {
           ctx.textAlign = 'left';
           ctx.fillText(f.label, sx + 10, sy + 18);
         }
-        if (f.prompt) {
-          const prompt = f.prompt;
-          const pulse = 0.72 + Math.max(0, Math.sin(time * 0.006 + f.x * 0.01)) * 0.16;
-          ctx.font = 'bold 13px Arial';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const pw = Math.min(116, Math.max(74, ctx.measureText(prompt).width + 18));
-          const px = sx + w / 2;
-          const py = sy - 16;
-          ctx.fillStyle = `rgba(2,4,7,${0.64 * pulse})`;
-          ctx.strokeStyle = `rgba(${tint},${0.48 * pulse})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.roundRect(px - pw / 2, py - 12, pw, 23, 6);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = `rgba(237,247,255,${0.9 * pulse})`;
-          ctx.fillText(prompt, px, py);
-          ctx.textBaseline = 'alphabetic';
-        }
       } else if (f.kind === 'blood') {
         ctx.beginPath();
         ctx.ellipse(sx, sy, w * 0.52, h * 0.48, (f.x + f.y) * 0.01, 0, Math.PI * 2);

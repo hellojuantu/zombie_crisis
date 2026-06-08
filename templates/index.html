@@ -67,6 +67,47 @@
         min-width: 210px;
         border-color: rgba(255, 194, 71, 0.16);
       }
+      #interact-hint {
+        position: fixed;
+        left: 50%;
+        bottom: 92px;
+        z-index: 18;
+        display: none;
+        align-items: center;
+        gap: 10px;
+        max-width: min(360px, calc(100vw - 28px));
+        padding: 9px 14px 9px 10px;
+        transform: translateX(-50%);
+        color: #edf7ff;
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 1.2;
+        text-align: center;
+        pointer-events: none;
+        background: linear-gradient(180deg, rgba(18, 23, 32, 0.92), rgba(5, 7, 11, 0.86));
+        border: 1px solid rgba(174, 230, 255, 0.28);
+        border-radius: 8px;
+        box-shadow:
+          0 14px 34px rgba(0, 0, 0, 0.36),
+          0 0 22px rgba(72, 240, 160, 0.12),
+          inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(9px);
+      }
+      #interact-hint.show {
+        display: flex;
+      }
+      #interact-hint b {
+        display: inline-grid;
+        width: 30px;
+        height: 28px;
+        place-items: center;
+        flex: 0 0 30px;
+        color: #06100c;
+        font-size: 16px;
+        background: #48f0a0;
+        border-radius: 6px;
+        box-shadow: 0 0 14px rgba(72, 240, 160, 0.34);
+      }
       #training-panel {
         display: none;
       }
@@ -1024,6 +1065,10 @@
       <div style="font-weight: 800; margin-bottom: 5px">行动记录</div>
       <div id="slist"></div>
     </div>
+    <div id="interact-hint" aria-hidden="true">
+      <b>F</b>
+      <span id="interactHintText">按 F 进入</span>
+    </div>
     <div id="training-panel"><div class="steps" id="trainingSteps"></div></div>
     <div id="inventory-overlay" aria-hidden="true">
       <div class="inventory-panel">
@@ -1120,6 +1165,6 @@
     <script src="/static/js/netcode.js?v=62"></script>
     <script src="/static/js/game/messages.js?v=62"></script>
     <script src="/static/js/game/scene_filter.js?v=62"></script>
-    <script type="module" src="/static/js/game/app.js?v=65"></script>
+    <script type="module" src="/static/js/game/app.js?v=66"></script>
   </body>
 </html>

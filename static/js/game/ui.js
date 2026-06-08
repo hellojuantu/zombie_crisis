@@ -13,6 +13,8 @@ export function createUI() {
   const audioBtn = document.getElementById('audioBtn');
   const deathOverlay = document.getElementById('death-overlay');
   const notifications = document.getElementById('notifications');
+  const interactHint = document.getElementById('interact-hint');
+  const interactHintText = document.getElementById('interactHintText');
   const bagSummary = document.getElementById('bag-summary');
   const inventoryOverlay = document.getElementById('inventory-overlay');
   const inventoryCloseBtn = document.getElementById('inventoryCloseBtn');
@@ -131,6 +133,7 @@ export function createUI() {
   }
 
   function showGame(name, color) {
+    setInteractHint('');
     setJoinLoading(false);
     joinScreen.style.display = 'none';
     hud.style.display = 'block';
@@ -149,15 +152,25 @@ export function createUI() {
     joinScreen.style.display = 'flex';
     trainingPanel.style.display = 'none';
     if (introGuide) introGuide.style.display = 'none';
+    setInteractHint('');
     setInventoryOpen(false);
     setIntermission(null);
     audioBtn.style.display = 'none';
+  }
+
+  function setInteractHint(text = '') {
+    if (!interactHint) return;
+    const show = Boolean(text);
+    if (show && interactHintText) interactHintText.textContent = text;
+    interactHint.classList.toggle('show', show);
+    interactHint.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   function setInventoryOpen(open) {
     if (!inventoryOverlay) return;
     inventoryOverlay.style.display = open ? 'flex' : 'none';
     inventoryOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (open) setInteractHint('');
   }
 
   function setIntermission(data, me = {}) {
@@ -165,6 +178,7 @@ export function createUI() {
     const active = Boolean(data?.active);
     intermissionOverlay.style.display = active ? 'flex' : 'none';
     intermissionOverlay.setAttribute('aria-hidden', active ? 'false' : 'true');
+    if (active) setInteractHint('');
     if (!active) {
       setIntermissionFeedback('');
       intermissionTalentKey = '';
@@ -530,7 +544,10 @@ export function createUI() {
     const roomPrompt = !inRoom && /^按 F /.test(me.facilityStatus || '') ? me.facilityStatus : '';
     stat.textContent = inRoom
       ? `${me.facilityStatus || '调查房间'} · 出口门返回走廊${sourceHint}`
-      : `${roomPrompt || obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
+      : `${obj.text || `收集任务物，感染体 ${state.wr || 0} 只`}${sourceHint}`;
+    setInteractHint(
+      !inventoryOpen && !me.dead && !state.intermission?.active && roomPrompt ? roomPrompt.replace(/^按 F\s*/, '') : '',
+    );
     bar.style.width = `${Math.round(Math.max(0, Math.min(1, obj.progress || 0)) * 100)}%`;
     bar.style.background = obj.readyExits ? '#48f0a0' : obj.boss ? '#ff4d7a' : '#ff4d5f';
     renderTaskList(obj.task || {}, state.exits || []);

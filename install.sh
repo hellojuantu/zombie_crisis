@@ -97,14 +97,45 @@ resolve_command() {
 }
 
 check_python() {
-  if ! command -v python3 >/dev/null 2>&1; then
-    error "未找到 python3，请先安装 Python 3.10+"
+  local python_bin
+  python_bin="$(find_python || true)"
+  if [ -z "$python_bin" ]; then
+    local pyver
+    pyver="$(current_python_version)"
+    if [ -n "$pyver" ]; then
+      error "需要 Python 3.10+，当前 python3 版本: $pyver"
+    fi
+    error "未找到 Python 3.10+，请先安装 Python 3.10 或更新版本"
   fi
-  local pyver
-  pyver="$(python3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>/dev/null || true)"
-  if ! python3 -c "import sys; assert sys.version_info >= (3, 10)" 2>/dev/null; then
-    error "需要 Python 3.10+，当前版本: ${pyver:-未知}"
+  echo "$python_bin"
+}
+
+current_python_version() {
+  local python_bin
+  python_bin="$(command -v python3 2>/dev/null || true)"
+  if [ -n "$python_bin" ]; then
+    "$python_bin" -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>/dev/null || true
   fi
+}
+
+find_python() {
+  local candidate
+  local python_bin
+  for candidate in "${ZOMBIE_CRISIS_PYTHON:-}" python3 python3.13 python3.12 python3.11 python3.10; do
+    [ -n "$candidate" ] || continue
+    python_bin="$(command -v "$candidate" 2>/dev/null || true)"
+    [ -n "$python_bin" ] || continue
+    if "$python_bin" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+      echo "$python_bin"
+      return 0
+    fi
+  done
+  return 1
+}
+
+venv_python_supported() {
+  [ -x "$INSTALL_DIR/.venv/bin/python" ] &&
+    "$INSTALL_DIR/.venv/bin/python" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null
 }
 
 check_git() {
@@ -190,7 +221,7 @@ update_checkout() {
   before="$(installed_version)"
   latest="$(remote_version)"
   if [ -n "$latest" ]; then
-    info "当前版本: $before，最新版本: $latest"
+    info "当前版本: $before / 最新版本: $latest"
   else
     info "当前版本: $before"
   fi
@@ -214,12 +245,18 @@ update_checkout() {
 }
 
 setup_runtime() {
-  check_python
+  local python_bin
+  python_bin="$(check_python)"
   ensure_checkout
+
+  if [ -d "$INSTALL_DIR/.venv" ] && ! venv_python_supported; then
+    info "重建运行环境..."
+    rm -rf "$INSTALL_DIR/.venv"
+  fi
 
   if [ ! -d "$INSTALL_DIR/.venv" ]; then
     info "创建运行环境..."
-    run_quiet "创建虚拟环境" python3 -m venv "$INSTALL_DIR/.venv"
+    run_quiet "创建虚拟环境" "$python_bin" -m venv "$INSTALL_DIR/.venv"
   fi
 
   info "检查依赖..."
@@ -263,7 +300,10 @@ find_extra_server_pids() {
 
 wait_for_url() {
   local timeout="${1:-20}"
-  python3 - "$URL" "$timeout" <<'PY'
+  local python_bin
+  python_bin="$(find_python || true)"
+  [ -n "$python_bin" ] || return 1
+  "$python_bin" - "$URL" "$timeout" <<'PY'
 import sys
 import time
 import urllib.request
@@ -306,8 +346,11 @@ open_when_ready() {
 }
 
 start_server() {
-  setup_runtime
-  install_control_command
+  local runtime_ready="${1:-0}"
+  if [ "$runtime_ready" != "1" ]; then
+    setup_runtime
+    install_control_command
+  fi
 
   local pid
   pid="$(service_pid)"
@@ -328,12 +371,12 @@ start_server() {
   printf '\n[%s] start zombie_crisis\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$SERVER_LOG"
   (
     cd "$INSTALL_DIR"
-    export PYTHONUNBUFFERED=1
-    exec nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/server_asgi.py"
-  ) >>"$SERVER_LOG" 2>&1 &
+    PYTHONUNBUFFERED=1 nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/server_asgi.py" \
+      >>"$SERVER_LOG" 2>&1 < /dev/null &
+    echo "$!" >"$PID_FILE"
+  )
 
-  pid="$!"
-  echo "$pid" >"$PID_FILE"
+  pid="$(pid_from_file)"
   sleep 0.4
   if ! pid_is_running "$pid"; then
     rm -f "$PID_FILE"
@@ -413,7 +456,7 @@ upgrade_game() {
   install_control_command
 
   if [ "$was_running" -eq 1 ]; then
-    start_server
+    start_server 1
   else
     info "升级完成。使用 $CONTROL_BIN start 启动游戏。"
   fi
@@ -434,7 +477,7 @@ print_versions() {
   if [ -n "$latest" ]; then
     echo "最新版本: $latest"
   else
-    echo "最新版本: 未知（无法读取远端 VERSION）"
+    echo "最新版本: 未知(无法读取远端 VERSION)"
   fi
 }
 

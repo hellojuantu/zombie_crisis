@@ -1029,7 +1029,6 @@ class Game:
                 "scene_id": f"{ROOM_SCENE_PREFIX}{effect}-{self.wave}",
                 "effect": effect,
                 "label": label,
-                "prompt": "按 F 进入",
                 "x": round(fx - MAZE_CELL * 0.42, 1),
                 "y": round(fy - MAZE_CELL * 0.34, 1),
                 "w": round(MAZE_CELL * 0.84, 1),
