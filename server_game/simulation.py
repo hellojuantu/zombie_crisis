@@ -6,6 +6,8 @@ import math
 import random
 import time
 
+from .persistence import apply_saved_player, load_game, save_game
+
 from .config import (
     BULLET_DAMAGE,
     BULLET_LIFE,
@@ -303,6 +305,7 @@ class Game:
         self.emit = emitter
         self.players = {}
         self._peak_players = 1
+        self._saved_players = {}
         self.zombies = {}
         self.bullets = {}
         self.items = {}
@@ -907,10 +910,26 @@ class Game:
 
     def reset(self, keep_players=False):
         old_sids = list(self.players.keys()) if keep_players else []
+        saved = self._saved_players
         self.__init__(emitter=self.emit)
+        self._saved_players = saved
         for sid in old_sids:
             self.add_player(sid)
         self.running = bool(self.players)
+
+    def save_state(self):
+        save_game(self)
+
+    def load_save(self):
+        data = load_game()
+        if not data:
+            return False
+        self.wave = max(1, int(data.get("wave", 1)))
+        self._peak_players = max(1, int(data.get("peak_players", 1)))
+        self._saved_players = data.get("players", {})
+        self.wave_remaining = self._wave_budget()
+        self.infection_source_remaining = self._infection_source_budget()
+        return True
 
     def _emit(self, event, data):
         if self.emit:
@@ -4433,6 +4452,7 @@ class Game:
         }
         for pid in list(self.players.keys()):
             self._emit_to("intermission_start", self._intermission_snapshot(pid), [pid])
+        save_game(self)
 
     def _sync_intermission_players(self):
         if not self.intermission:
@@ -5160,6 +5180,7 @@ class Game:
             "last_seen": now,
         }
         self._peak_players = max(self._peak_players, len(self.players))
+        apply_saved_player(self.players[sid], self._saved_players)
         return idx, sx, sy
 
     def remove_player(self, sid):

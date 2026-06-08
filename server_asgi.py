@@ -39,9 +39,12 @@ def queue_emit(event, data):
 
 
 G = Game(emitter=queue_emit)
+G.load_save()
 _tasks_started = False
 _tasks_lock = asyncio.Lock()
 _game_lock = asyncio.Lock()
+_last_save_at = time.monotonic()
+_SAVE_INTERVAL = 60.0
 
 
 def drain_events():
@@ -66,12 +69,17 @@ async def emit_events(events):
 
 async def logic_loop():
     """Fixed-rate authoritative simulation loop."""
+    global _last_save_at
     while True:
         await sio.sleep(SERVER_DT)
         async with _game_lock:
             G.tick(SERVER_DT)
             events = drain_events()
         await emit_events(events)
+        now = time.monotonic()
+        if G.running and G.players and now - _last_save_at >= _SAVE_INTERVAL:
+            _last_save_at = now
+            G.save_state()
 
 
 async def sync_loop():

@@ -19,3 +19,5 @@ yarn-error.log*
 *.db
 
 .idea/
+
+save.json

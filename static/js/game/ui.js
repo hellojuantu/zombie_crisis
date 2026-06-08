@@ -11,6 +11,7 @@ export function createUI() {
   const introGuide = document.getElementById('intro-guide');
   const introStartBtn = document.getElementById('introStartBtn');
   const audioBtn = document.getElementById('audioBtn');
+  const pauseOverlay = document.getElementById('pause-overlay');
   const deathOverlay = document.getElementById('death-overlay');
   const notifications = document.getElementById('notifications');
   const interactHint = document.getElementById('interact-hint');
@@ -171,6 +172,11 @@ export function createUI() {
     inventoryOverlay.style.display = open ? 'flex' : 'none';
     inventoryOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
     if (open) setInteractHint('');
+  }
+
+  function setPaused(paused) {
+    if (!pauseOverlay) return;
+    pauseOverlay.style.display = paused ? 'flex' : 'none';
   }
 
   function setIntermission(data, me = {}) {
@@ -615,6 +621,7 @@ export function createUI() {
     setJoinLoading,
     setPing,
     setInventoryOpen,
+    setPaused,
     setIntermission,
     setIntermissionFeedback,
     showGame,

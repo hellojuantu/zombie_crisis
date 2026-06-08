@@ -79,6 +79,7 @@ let socketReady = false;
 let joining = false;
 let joined = false;
 let myId = null;
+let gamePaused = false;
 let maxLevelNotified = false;
 const hintedTypes = new Set();
 const ITEM_HINTS = {
@@ -100,7 +101,7 @@ let interactReq = false;
 let reloadReq = false;
 let fireReq = false;
 let weaponReq = '';
-let inventoryOpen = false;
+let inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
 let inputDirty = false;
 let inputSeq = 0;
 let lastInputAt = 0;
@@ -635,7 +636,7 @@ function localMeleeFx(nowSeconds) {
 }
 
 function requestFire(nowMs, hold = false) {
-  if (inventoryOpen) return;
+  if (inventoryOpen || gamePaused) return;
   audio.unlock();
   markTraining('shoot');
   updateAim();
@@ -706,7 +707,7 @@ function sendPing(ts) {
 
 function sendInput(force = false) {
   if (!sock || !joined) return;
-  const paused = inventoryOpen || Boolean(state.intermission?.active);
+  const paused = gamePaused || inventoryOpen || Boolean(state.intermission?.active);
   const locallyMoving = Math.hypot(me.vx || 0, me.vy || 0) > 2;
   const ik = {
     up: !paused && (keys.w || keys.arrowup),
@@ -1475,7 +1476,7 @@ function setupSocket() {
     fireReq = false;
     weaponReq = '';
     inputDirty = true;
-    inventoryOpen = false;
+    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
     ui.setInventoryOpen(false);
     ui.setIntermission(state.intermission, me);
     if (data?.ending) audio.stage(true);
@@ -1613,7 +1614,7 @@ function setupSocket() {
     ui.notify(data.reason || '当前不能重开本关', data.col || '#ffc247');
   });
   sock.on('game_restart', () => {
-    inventoryOpen = false;
+    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
     maxLevelNotified = false;
     hintedTypes.clear();
     ui.setInventoryOpen(false);
@@ -1630,7 +1631,7 @@ function setupSocket() {
   sock.on('disconnect', () => {
     joined = false;
     joining = false;
-    inventoryOpen = false;
+    inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
     ui.setInventoryOpen(false);
     ui.setIntermission(null);
     predictor.clear();
@@ -1641,7 +1642,7 @@ function setupSocket() {
 
 function joinGame() {
   if (joining) return;
-  inventoryOpen = false;
+  inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
   ui.setInventoryOpen(false);
   audio.unlock();
   ui.setAudioOn(audio.enabled);
@@ -1669,7 +1670,7 @@ function restartStage() {
   }
   const s = ensureSocket();
   if (!s) return;
-  inventoryOpen = false;
+  inventoryOpen = false;\n    gamePaused = false;\n    ui.setPaused(false);
   ui.setInventoryOpen(false);
   clearInput();
   ui.notify('放弃本关，重新部署...', '#ffb1bd');
@@ -1699,6 +1700,23 @@ function clearInput() {
   fireReq = false;
   weaponReq = '';
   inputDirty = true;
+  sendInput(true);
+}
+
+function setGamePaused(open) {
+  if (!joined || state.intermission?.active || gamePaused === open) return;
+  gamePaused = open;
+  keys = {};
+  shooting = false;
+  dashReq = false;
+  interactReq = false;
+  reloadReq = false;
+  fireReq = false;
+  weaponReq = '';
+  me.vx = 0;
+  me.vy = 0;
+  inputDirty = true;
+  ui.setPaused(open);
   sendInput(true);
 }
 
@@ -1788,8 +1806,9 @@ window.addEventListener('keydown', (event) => {
     keys[key] = true;
     return;
   }
-  if (key === 'escape' && inventoryOpen) {
-    setInventoryOpen(false);
+  if (key === 'escape') {
+    if (inventoryOpen) setInventoryOpen(false);
+    else setGamePaused(!gamePaused);
     keys[key] = true;
     return;
   }
@@ -1876,10 +1895,10 @@ window.addEventListener(
       requestWeaponStep(1);
       return;
     }
-    if (ignoreAttackEvent(event)) return;
+    if (ignoreAttackEvent(event) || gamePaused) return;
     pointerX = event.clientX;
     pointerY = event.clientY;
-    requestFire(performance.now(), false);
+    requestFire(performance.now(), true);
   },
   true,
 );

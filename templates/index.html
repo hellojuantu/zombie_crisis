@@ -939,6 +939,28 @@
         padding: 8px 12px;
         font-size: 13px;
       }
+      #pause-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 60;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        pointer-events: none;
+      }
+      #pause-overlay .msg {
+        font-size: 36px;
+        color: #fff;
+        letter-spacing: 4px;
+        text-shadow: 2px 2px 12px #000;
+      }
+      #pause-overlay .sub {
+        font-size: 14px;
+        color: #aaa;
+        margin-top: 10px;
+      }
       #death-overlay {
         position: fixed;
         inset: 0;
@@ -1149,6 +1171,10 @@
     </div>
     <button id="audioBtn" style="display: none" type="button">音频 开</button>
     <div id="notifications"></div>
+    <div id="pause-overlay">
+      <div class="msg">已暂停</div>
+      <div class="sub">按 ESC 继续</div>
+    </div>
     <div id="death-overlay">
       <div class="msg">你倒下了</div>
       <div class="sub">正在重新部署...</div>
