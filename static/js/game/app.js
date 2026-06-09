@@ -227,26 +227,22 @@ function currentWeaponMeta() {
   return weaponTypes[me.weapon] || weaponTypes.pistol || {};
 }
 
-const QUIET_PICKUP_TYPES = new Set([
-  'ammo',
-  'ammo_pistol',
-  'ammo_rifle',
-  'ammo_smg',
-  'ammo_shell',
-  'ammo_explosive',
-  'parts',
-  'medkit',
-]);
+const TASK_PICKUP_TYPES = new Set(['fuse', 'sample', 'keycard']);
 
 function shouldNotifyPickup(data) {
   const type = data?.type || '';
-  const sceneId = data?.sceneId || state.scene || 'main';
-  const inRoom = sceneId !== 'main';
   if (!type) return false;
-  if (inRoom && type !== 'lore') return true;
-  if (QUIET_PICKUP_TYPES.has(type) || type.startsWith('weapon_')) return false;
+  if (TASK_PICKUP_TYPES.has(type)) return false;
   if (type === 'lore') return false;
   return true;
+}
+
+function pickupSuffix(data) {
+  const type = data?.type || '';
+  if ((type || '').startsWith('weapon_') || type === 'vehicle') return '';
+  const amount = Number(data?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return '';
+  return ` +${Math.round(amount)}`;
 }
 
 function unlockedWeapons() {
@@ -1306,9 +1302,9 @@ function setupSocket() {
       if (Number.isFinite(data.weaponLevel)) me.weaponLevel = data.weaponLevel;
       applyWeaponEvent(data);
       me.vehicle = Boolean(data.vehicle);
-      const suffix = data.amount && data.amount > 1 ? ` +${data.amount}` : '';
       markTraining('objective');
       if (shouldNotifyPickup(data)) {
+        const suffix = pickupSuffix(data);
         ui.notify(`获得 ${data.name}${suffix}`, data.col || '#fff');
         const hint = ITEM_HINTS[data.type];
         if (hint && !hintedTypes.has(data.type)) {

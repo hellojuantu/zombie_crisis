@@ -221,6 +221,10 @@ ROOM_ENTRY_HINTS = {
     "security": "破解安保柜：消耗门禁卡，换取武器/零件和撤离情报。",
     "morgue": "翻检尸袋：持续掉血，换取样本和急救物资。",
 }
+ROOM_ENTRY_COSTS = {
+    "generator": ("fuse", 1, "搜索会消耗保险丝"),
+    "security": ("keycard", 1, "搜索会消耗门禁卡"),
+}
 ROOM_REWARD_TABLE = {
     "medbay": {
         "guaranteed": ("medkit",),
@@ -418,6 +422,15 @@ class Game:
             have = self._resource_count(typ)
             parts.append(f"{names.get(typ, typ)} {have}/{needed}")
         return " · ".join(parts) if parts else "无需额外物资"
+
+    def _room_entry_cost_text(self, effect):
+        cost = ROOM_ENTRY_COSTS.get(effect)
+        if not cost:
+            return ""
+        typ, needed, label = cost
+        have = self._resource_count(typ)
+        names = {"fuse": "保险丝", "sample": "病毒样本", "keycard": "门禁卡", "lore": "档案"}
+        return f"{label} {have}/{needed}"
 
     def _resource_count(self, typ):
         if typ == "lore":
@@ -1939,14 +1952,15 @@ class Game:
             return False
         return any(self._entity_scene(player) == scene_id for player in self.players.values())
 
-    def _sweep_empty_room_scene(self, scene_id):
+    def _sweep_empty_room_scene(self, scene_id, keep_items=False):
         if not scene_id or scene_id == SCENE_MAIN or self._scene_has_players(scene_id):
             return
         self.pending_fog_spawns = [
             entry for entry in self.pending_fog_spawns
             if entry.get("scene") != scene_id
         ]
-        for entities in (self.zombies, self.bullets, self.items):
+        entity_sets = (self.zombies, self.bullets) if keep_items else (self.zombies, self.bullets, self.items)
+        for entities in entity_sets:
             for eid, entity in list(entities.items()):
                 if self._entity_scene(entity) == scene_id:
                     entities.pop(eid, None)
@@ -3212,7 +3226,7 @@ class Game:
             "col": "#aee6ff",
             "facility": (room or {}).get("effect", ""),
         }, [sid])
-        self._sweep_empty_room_scene(scene_id)
+        self._sweep_empty_room_scene(scene_id, keep_items=True)
         return True
 
     def _room_exit_reached(self, player):
@@ -3330,7 +3344,34 @@ class Game:
         return sum(1 for zombie in self.zombies.values() if self._entity_scene(zombie) == scene_id)
 
     def _room_hint(self, effect):
-        return ROOM_ENTRY_HINTS.get(effect, "调查房间：搜索物资，同时承担房间风险。")
+        hint = ROOM_ENTRY_HINTS.get(effect, "调查房间：搜索物资，同时承担房间风险。")
+        cost = self._room_entry_cost_text(effect)
+        return f"{hint} {cost}" if cost else hint
+
+    def _room_loot_summary(self, item_ids):
+        counts = {}
+        for iid in item_ids or []:
+            item = self.items.get(iid)
+            if not item:
+                continue
+            name = item.get("name") or ITEM_TYPES.get(item.get("type"), {}).get("name", "物资")
+            counts[name] = counts.get(name, 0) + 1
+        parts = [f"{name}x{count}" if count > 1 else name for name, count in counts.items()]
+        return "、".join(parts)
+
+    def _notify_room_loot(self, sid, player, spawned, color="#aee6ff"):
+        summary = self._room_loot_summary(spawned)
+        if not summary:
+            return
+        self._emit_to("facility_pulse", {
+            "pid": sid,
+            "text": f"物资已掉落：{summary} · 靠近自动拾取，离开后可再次进入领取",
+            "x": round(player["x"], 1),
+            "y": round(player["y"], 1),
+            "col": color,
+            "facility": player.get("facility_effect", ""),
+            "noticeKey": "room_loot_ready",
+        }, [sid])
 
     def _room_reward_types(self, room, effect, player):
         if effect == "armory":
@@ -3477,9 +3518,10 @@ class Game:
                         label = room.get("label", "设施")
                         room_id = room.get("id", "")
                         effect = room.get("effect", "")
+                        cost_text = self._room_entry_cost_text(effect)
                         player["facility_label"] = label
                         player["facility_effect"] = effect
-                        player["facility_status"] = f"按 F 进入{label}"
+                        player["facility_status"] = f"按 F 进入{label}" + (f" · {cost_text}" if cost_text else "")
                         if player.get("facility_room_id") != room_id:
                             player["facility_room_id"] = room_id
                             player["facility_search"] = 0
@@ -3566,6 +3608,7 @@ class Game:
                         room["searched"] = True
                         room["active"] = False
                         player["facility_status"] = self._room_reward_status(effect, "医疗物资已掉落") + hazard_suffix
+                        self._notify_room_loot(sid, player, spawned, "#48f0a0")
                         self._emit_to("facility_used", {
                             "pid": sid,
                             "facility": "medbay",
@@ -3591,7 +3634,8 @@ class Game:
                     room["searched"] = True
                     room["active"] = False
                     self.power_on = True
-                    self._spawn_room_rewards(room, effect, player, scene_id)
+                    spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                    self._notify_room_loot(sid, player, spawned, "#66d9ff")
                     revealed = self._reveal_one_exit(now, source="generator")
                     player["facility_status"] = "供电已恢复"
                     self._emit("task_update", {
@@ -3637,6 +3681,7 @@ class Game:
                     if spawned:
                         room["searched"] = True
                         player["facility_status"] = self._room_reward_status(effect, "样本容器已掉落") + hazard_suffix
+                        self._notify_room_loot(sid, player, spawned, "#b7ff47")
                         self._emit_to("facility_used", {
                             "pid": sid,
                             "facility": "lab",
@@ -3670,6 +3715,7 @@ class Game:
                         room["searched"] = True
                         room["active"] = False
                         player["facility_status"] = self._room_reward_status(effect, "档案已掉落") + hazard_suffix
+                        self._notify_room_loot(sid, player, spawned, "#aee6ff")
                         if random.random() < 0.55:
                             self._reveal_one_exit(now, source="archive")
             elif effect == "security":
@@ -3691,7 +3737,8 @@ class Game:
                 self.task_counts["keycard"] = max(0, self.task_counts.get("keycard", 0) - 1)
                 room["searched"] = True
                 room["active"] = False
-                self._spawn_room_rewards(room, effect, player, scene_id)
+                spawned = self._spawn_room_rewards(room, effect, player, scene_id)
+                self._notify_room_loot(sid, player, spawned, "#d98cff")
                 revealed = self._reveal_one_exit(now, source="security")
                 player["facility_status"] = "安保柜已开" + hazard_suffix
                 self._emit("task_update", {
@@ -3732,6 +3779,7 @@ class Game:
                         room["searched"] = True
                         room["active"] = False
                         player["facility_status"] = self._room_reward_status(effect, "样本已掉落") + hazard_suffix
+                        self._notify_room_loot(sid, player, spawned, "#b7ff47")
             elif effect == "armory":
                 if room.get("searched"):
                     player["facility_search"] = 0
@@ -3745,6 +3793,7 @@ class Game:
                     spawned = self._spawn_room_rewards(room, effect, player, scene_id)
                     room["searched"] = True
                     room["active"] = False
+                    self._notify_room_loot(sid, player, spawned, "#ffc247")
                     primary_type = self.items.get(spawned[0], {}).get("type") if spawned else "parts"
                     meta = ITEM_TYPES.get(primary_type, {})
                     self._emit_to("facility_used", {
@@ -5705,7 +5754,7 @@ class Game:
             if self._entity_scene(item) != scene:
                 continue
             is_objective = item.get("type") in OBJECTIVE_ITEM_TYPES
-            item_radius = room_objective_radius if scene != SCENE_MAIN and is_objective else radius
+            item_radius = room_objective_radius if scene != SCENE_MAIN else radius
             radius_sq = item_radius * item_radius
             d2 = (item["x"] - viewer["x"]) ** 2 + (item["y"] - viewer["y"]) ** 2
             if d2 <= radius_sq:

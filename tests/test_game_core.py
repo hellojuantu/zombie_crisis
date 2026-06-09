@@ -898,7 +898,7 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(any(ev == "lore_found" and data["count"] == 1 for ev, data in events))
         self.assertTrue(any(ev == "item_pick" and data["type"] == "lore" for ev, data in events))
 
-    def test_objective_items_remain_visible_across_room_aoi(self):
+    def test_room_items_remain_visible_across_room_aoi(self):
         game, _ = self.make_game()
         now = game._now()
         room = next(feature for feature in game.map_features if feature.get("kind") == "room")
@@ -922,8 +922,8 @@ class GameCoreTest(unittest.TestCase):
         snap = game.get_snapshot("p1")
 
         self.assertIn(1, snap["i"])
-        self.assertNotIn(2, snap["i"])
-        self.assertLess(snap["perf"]["payload_max_bytes"], 8000)
+        self.assertIn(2, snap["i"])
+        self.assertLess(snap["perf"]["payload_max_bytes"], 9000)
 
     def test_dangerous_room_hazard_damages_only_current_scene_player(self):
         game, _ = self.make_game()
@@ -1132,7 +1132,7 @@ class GameCoreTest(unittest.TestCase):
         game._apply_facility_effects(SERVER_DT, now)
 
         self.assertEqual(player["scene"], "main")
-        self.assertEqual(player["facility_status"], f"按 F 进入{room['label']}")
+        self.assertTrue(player["facility_status"].startswith(f"按 F 进入{room['label']}"))
         self.assertTrue(any(ev == "facility_pulse" and "按 F" in data["text"] for ev, data in events))
 
         game.handle_input("p1", {"seq": 1, "interact": True})
@@ -1164,6 +1164,37 @@ class GameCoreTest(unittest.TestCase):
         game._apply_facility_effects(SERVER_DT, now + 3.0)
         self.assertEqual(player["scene"], "main")
         self.assertTrue(any(ev == "scene_change" and data["reason"] == "leave_room" for ev, data in events))
+
+    def test_facility_entry_prompt_mentions_required_consumable(self):
+        game, events = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("effect") == "generator")
+        player = game.players["p1"]
+        player["x"] = room["x"] + room["w"] / 2
+        player["y"] = room["y"] + room["h"] / 2
+        game.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
+
+        game._apply_facility_effects(SERVER_DT, now)
+
+        self.assertIn("搜索会消耗保险丝 0/1", player["facility_status"])
+        prompt = [data for ev, data in events if ev == "facility_pulse"][-1]
+        self.assertIn("搜索会消耗保险丝 0/1", prompt["text"])
+
+    def test_leaving_room_preserves_uncollected_items_but_clears_danger(self):
+        game, _ = self.make_game()
+        now = game._now()
+        room = next(feature for feature in game.map_features if feature.get("kind") == "room")
+        player = self.enter_room(game, room, now)
+        scene_id = player["scene"]
+        item_id = game.spawn_item(x=500, y=500, item_type="parts", scene=scene_id)
+        zombie_id = game.spawn_zombie(x=650, y=500, ztype="runner", scene=scene_id)
+        game.bullets["room-bullet"] = {"owner": "p1", "scene": scene_id, "x": 540, "y": 500}
+
+        self.assertTrue(game._leave_room_scene("p1", player, now + 1.0))
+
+        self.assertIn(item_id, game.items)
+        self.assertNotIn(zombie_id, game.zombies)
+        self.assertNotIn("room-bullet", game.bullets)
 
     def test_interact_input_clears_inside_room_without_exit(self):
         game, _ = self.make_game()

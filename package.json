@@ -1,6 +1,6 @@
 {
   "name": "zombie-crisis",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "scripts": {
     "format": "prettier --write \"README.md\" \"AGENTS.md\" \"templates/**/*.html\" \"static/js/**/*.js\" \"tests/**/*.js\"",

@@ -536,6 +536,22 @@ export function createRenderer(canvas, minimap) {
 
   function drawItems(items, view, time, visibility) {
     const { x: cx, y: cy } = view;
+    const roomScene = visibility?.scene && visibility.scene !== 'main';
+    const labeledTypes = new Set([
+      'fuse',
+      'sample',
+      'keycard',
+      'lore',
+      'vehicle',
+      'parts',
+      'medkit',
+      'ammo',
+      'ammo_pistol',
+      'ammo_rifle',
+      'ammo_smg',
+      'ammo_shell',
+      'ammo_explosive',
+    ]);
     for (const item of Object.values(items)) {
       if (!nearDynamic(item, visibility)) continue;
       const sx = item.x - cx;
@@ -650,6 +666,22 @@ export function createRenderer(canvas, minimap) {
         !(item.type || '').startsWith('weapon_')
       )
         ctx.fillText(item.icon, 0, 0);
+      if (roomScene || labeledTypes.has(item.type) || (item.type || '').startsWith('weapon_')) {
+        const label = item.name || item.icon || '物资';
+        ctx.font = 'bold 11px Arial';
+        const labelWidth = Math.min(92, Math.max(34, ctx.measureText(label).width + 12));
+        ctx.fillStyle = 'rgba(2,4,7,.72)';
+        ctx.strokeStyle = hexrgba(item.color, 0.5);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(-labelWidth / 2, item.radius + 11, labelWidth, 20, 5);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#edf7ff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, 0, item.radius + 21, labelWidth - 8);
+      }
       ctx.restore();
     }
   }
@@ -1022,9 +1054,10 @@ export function createRenderer(canvas, minimap) {
       mini.fillRect(z.x * sx - 1, z.y * sy - 1, 2, 2);
     }
     const OBJECTIVE_TYPES = new Set(['fuse', 'sample', 'keycard', 'lore']);
+    const roomScene = state.scene && state.scene !== 'main';
     for (const item of Object.values(state.items)) {
       const inVision = (item.x - px) ** 2 + (item.y - py) ** 2 <= vision * vision;
-      const isObjective = OBJECTIVE_TYPES.has(item.type);
+      const isObjective = OBJECTIVE_TYPES.has(item.type) || roomScene;
       if (inVision) {
         mini.fillStyle = item.color;
         mini.fillRect(item.x * sx - 1, item.y * sy - 1, 2, 2);
@@ -1074,7 +1107,7 @@ export function createRenderer(canvas, minimap) {
     drawExits(state.exits, state.mission, view, time);
     drawEffects({ decals: effects.decals, rings: [], particles: [] }, view);
     const dynamicRadius = Math.max(160, (state.dynamicAoi || 980) - 60);
-    const visibility = { x: me.x || 0, y: me.y || 0, radius: dynamicRadius, myId };
+    const visibility = { x: me.x || 0, y: me.y || 0, radius: dynamicRadius, myId, scene: state.scene || 'main' };
     drawItems(state.items, view, time, visibility);
     drawBullets(state.b, view, visibility);
     drawZombies(state.z, view, time, visibility);
