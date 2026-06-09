@@ -138,7 +138,10 @@
     if (hit(nx, ny)) {
       if (!hit(nx, y)) ny = y;
       else if (!hit(x, ny)) nx = x;
-      else { nx = x; ny = y; }
+      else {
+        nx = x;
+        ny = y;
+      }
     }
     return resolveOverlap(nx, ny, radius, mapW, mapH, obstacles);
   }

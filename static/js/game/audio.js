@@ -67,8 +67,7 @@ export function createAudio() {
     const buf = c.createBuffer(2, len, c.sampleRate);
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch);
-      for (let i = 0; i < len; i++)
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
     }
     return buf;
   }
@@ -79,7 +78,7 @@ export function createAudio() {
     reverbNode.normalize = true;
     reverbNode.buffer = makeImpulse(c, 0.6, 3.0);
     reverbSend = c.createGain();
-    reverbSend.gain.value = 0;          // stays silent until set per-sound
+    reverbSend.gain.value = 0; // stays silent until set per-sound
     reverbSend.connect(reverbNode);
     reverbNode.connect(master);
   }
@@ -202,8 +201,7 @@ export function createAudio() {
     const osc = c.createOscillator();
     osc.type = type;
     osc.frequency.setValueAtTime(startFreq, now);
-    if (endFreq !== startFreq)
-      osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + attack + decay);
+    if (endFreq !== startFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + attack + decay);
 
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, now);
@@ -283,10 +281,25 @@ export function createAudio() {
 
   // Formant presets
   const FORMANTS = {
-    growl:  [{freq: 380, Q: 8, gain: 1}, {freq: 780, Q: 5, gain: 0.7}, {freq: 1200, Q: 4, gain: 0.4}],
-    scream: [{freq: 900, Q: 6, gain: 1}, {freq: 1800, Q: 5, gain: 0.8}, {freq: 3200, Q: 4, gain: 0.6}],
-    moan:   [{freq: 200, Q: 10, gain: 1}, {freq: 450, Q: 8, gain: 0.8}, {freq: 900, Q: 6, gain: 0.4}],
-    death:  [{freq: 150, Q: 8, gain: 1}, {freq: 380, Q: 6, gain: 0.7}],
+    growl: [
+      { freq: 380, Q: 8, gain: 1 },
+      { freq: 780, Q: 5, gain: 0.7 },
+      { freq: 1200, Q: 4, gain: 0.4 },
+    ],
+    scream: [
+      { freq: 900, Q: 6, gain: 1 },
+      { freq: 1800, Q: 5, gain: 0.8 },
+      { freq: 3200, Q: 4, gain: 0.6 },
+    ],
+    moan: [
+      { freq: 200, Q: 10, gain: 1 },
+      { freq: 450, Q: 8, gain: 0.8 },
+      { freq: 900, Q: 6, gain: 0.4 },
+    ],
+    death: [
+      { freq: 150, Q: 8, gain: 1 },
+      { freq: 380, Q: 6, gain: 0.7 },
+    ],
   };
 
   // ── Ambient internal helpers ─────────────────────────────────────────────
@@ -298,12 +311,16 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.28;
     burstNoise(c, master, 'bandpass', 700 + Math.random() * 80, 2.4, 0.045 * amount, 0.02, 0.48, pan);
     burstOsc(c, master, 'sawtooth', 190 + Math.random() * 80, 85, 0.026 * amount, 0.01, 0.45, pan);
-    at(c, () => {
-      const cc = ensure();
-      if (!cc) return;
-      burstOsc(cc, master, 'triangle', 72, 54, 0.026 * amount, 0.01, 0.33, pan);
-      burstNoise(cc, master, 'highpass', 2100, 0.55, 0.06 * amount, 0.01, 0.12, pan);
-    }, 0.34);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 72, 54, 0.026 * amount, 0.01, 0.33, pan);
+        burstNoise(cc, master, 'highpass', 2100, 0.55, 0.06 * amount, 0.01, 0.12, pan);
+      },
+      0.34,
+    );
   }
 
   function radioWhisper(intensity = 1) {
@@ -313,18 +330,33 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.3;
     burstNoise(c, master, 'bandpass', 1180, 3.5, 0.055 * amount, 0.02, 0.83, pan);
     burstOsc(c, master, 'square', 246, 216, 0.018 * amount, 0.005, 0.095, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'square', 311, 256, 0.014 * amount, 0.005, 0.075, pan);
-    }, 0.13);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'square', 174, 149, 0.016 * amount, 0.005, 0.115, pan);
-    }, 0.28);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstNoise(cc, master, 'highpass', 2600, 0.8, 0.04 * amount, 0.01, 0.15, pan);
-    }, 0.5);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'square', 311, 256, 0.014 * amount, 0.005, 0.075, pan);
+      },
+      0.13,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'square', 174, 149, 0.016 * amount, 0.005, 0.115, pan);
+      },
+      0.28,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstNoise(cc, master, 'highpass', 2600, 0.8, 0.04 * amount, 0.01, 0.15, pan);
+      },
+      0.5,
+    );
   }
 
   function distantScream(intensity = 1) {
@@ -336,14 +368,24 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.35;
     formantNoise(c, master, FORMANTS.scream, 0.55, 0.045 * amount, pan);
     burstOsc(c, master, 'sawtooth', 620, 960, 0.028 * amount, 0.02, 0.5, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 930, 410, 0.032 * amount, 0.01, 0.25, pan);
-    }, 0.08);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'sawtooth', 410, 230, 0.022 * amount, 0.02, 0.34, pan);
-    }, 0.32);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 930, 410, 0.032 * amount, 0.01, 0.25, pan);
+      },
+      0.08,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'sawtooth', 410, 230, 0.022 * amount, 0.02, 0.34, pan);
+      },
+      0.32,
+    );
   }
 
   function monsterGrowl(intensity = 1) {
@@ -355,10 +397,15 @@ export function createAudio() {
     formantNoise(c, dist, FORMANTS.growl, 0.72, 0.075 * amount, 0, false);
     dist.connect(master);
     burstOsc(c, master, 'sawtooth', 72, 48, 0.065 * amount, 0.02, 0.76, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 93, 58, 0.04 * amount, 0.01, 0.45, pan);
-    }, 0.08);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 93, 58, 0.04 * amount, 0.01, 0.45, pan);
+      },
+      0.08,
+    );
   }
 
   function slam(intensity = 1) {
@@ -368,13 +415,25 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.15;
     burstNoise(c, master, 'lowpass', 90, 0.5, 0.2 * amount, 0.002, 0.158, pan);
     burstOsc(c, master, 'sine', 42, 32, 0.18 * amount, 0.002, 0.338, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstNoise(cc, master, 'bandpass', 1500, 1.8, 0.08 * amount, 0.01, 0.11, pan);
-    }, 0.05);
-    sendToReverb(c, (() => {
-      const g = c.createGain(); g.gain.value = 0.25 * amount; g.connect(master); return g;
-    })(), 0.2);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstNoise(cc, master, 'bandpass', 1500, 1.8, 0.08 * amount, 0.01, 0.11, pan);
+      },
+      0.05,
+    );
+    sendToReverb(
+      c,
+      (() => {
+        const g = c.createGain();
+        g.gain.value = 0.25 * amount;
+        g.connect(master);
+        return g;
+      })(),
+      0.2,
+    );
   }
 
   function jumpScare(intensity = 1) {
@@ -384,10 +443,15 @@ export function createAudio() {
     slam(0.9 * amount);
     burstNoise(c, master, 'highpass', 2400, 0.65, 0.14 * amount, 0.002, 0.238, 0);
     burstOsc(c, master, 'square', 980, 370, 0.045 * amount, 0.005, 0.155, 0);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'sawtooth', 68, 46, 0.08 * amount, 0.01, 0.41, 0);
-    }, 0.08);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'sawtooth', 68, 46, 0.08 * amount, 0.01, 0.41, 0);
+      },
+      0.08,
+    );
   }
 
   function alarm(intensity = 1) {
@@ -396,12 +460,17 @@ export function createAudio() {
     const amount = Math.max(0.55, Math.min(2, intensity));
     slam(0.55 * amount);
     for (let i = 0; i < 3; i++) {
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        const pan = (Math.random() * 2 - 1) * 0.2;
-        burstOsc(cc, master, 'sawtooth', 420, 580, 0.035 * amount, 0.01, 0.17, pan);
-        burstNoise(cc, master, 'bandpass', 900, 1.3, 0.045 * amount, 0.01, 0.11, pan);
-      }, i * 0.32);
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          const pan = (Math.random() * 2 - 1) * 0.2;
+          burstOsc(cc, master, 'sawtooth', 420, 580, 0.035 * amount, 0.01, 0.17, pan);
+          burstNoise(cc, master, 'bandpass', 900, 1.3, 0.045 * amount, 0.01, 0.11, pan);
+        },
+        i * 0.32,
+      );
     }
   }
 
@@ -411,7 +480,16 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.5;
     burstNoise(c, master, 'highpass', 3200 + Math.random() * 2000, 4, 0.018, 0.003, 0.04, pan);
     burstOsc(c, master, 'sine', 1200 + Math.random() * 400, 600, 0.012, 0.003, 0.05, pan);
-    sendToReverb(c, (() => { const g = c.createGain(); g.gain.value = 0.01; g.connect(master); return g; })(), 0.38);
+    sendToReverb(
+      c,
+      (() => {
+        const g = c.createGain();
+        g.gain.value = 0.01;
+        g.connect(master);
+        return g;
+      })(),
+      0.38,
+    );
   }
 
   function distantMoan() {
@@ -429,7 +507,7 @@ export function createAudio() {
     const intensity = 0.75 + danger * 0.6;
     if (roll < 0.22) radioWhisper(intensity);
     else if (roll < 0.44) metalCreak(intensity);
-    else if (roll < 0.60) distantScream(intensity);
+    else if (roll < 0.6) distantScream(intensity);
     else if (roll < 0.72) distantMoan();
     else if (roll < 0.84) monsterGrowl(0.7 + danger * 0.5);
     else jumpScare(0.72 + danger * 0.45);
@@ -602,11 +680,47 @@ export function createAudio() {
   // ── Weapon shot ──────────────────────────────────────────────────────────
 
   const WEAPON_CFG = {
-    pistol:   { subVol: 0.5,  midVol: 0.3,  highVol: 0.15, subFreq: 75, bodyStart: 120, bodyEnd: 40, decay: 0.16, pan: 0.08 },
-    rifle:    { subVol: 0.7,  midVol: 0.25, highVol: 0.2,  subFreq: 60, bodyStart: 100, bodyEnd: 32, decay: 0.28, pan: 0.08 },
-    shotgun:  { subVol: 0.8,  midVol: 0.4,  highVol: 0.22, subFreq: 65, bodyStart: 110, bodyEnd: 38, decay: 0.38, pan: 0.06 },
-    smg:      { subVol: 0.35, midVol: 0.2,  highVol: 0.12, subFreq: 90, bodyStart: 130, bodyEnd: 48, decay: 0.10, pan: 0.08 },
-    launcher: { subVol: 0.9,  midVol: 0.3,  highVol: 0.12, subFreq: 48, bodyStart:  90, bodyEnd: 22, decay: 0.55, pan: 0.05 },
+    pistol: {
+      subVol: 0.5,
+      midVol: 0.3,
+      highVol: 0.15,
+      subFreq: 75,
+      bodyStart: 120,
+      bodyEnd: 40,
+      decay: 0.16,
+      pan: 0.08,
+    },
+    rifle: {
+      subVol: 0.7,
+      midVol: 0.25,
+      highVol: 0.2,
+      subFreq: 60,
+      bodyStart: 100,
+      bodyEnd: 32,
+      decay: 0.28,
+      pan: 0.08,
+    },
+    shotgun: {
+      subVol: 0.8,
+      midVol: 0.4,
+      highVol: 0.22,
+      subFreq: 65,
+      bodyStart: 110,
+      bodyEnd: 38,
+      decay: 0.38,
+      pan: 0.06,
+    },
+    smg: { subVol: 0.35, midVol: 0.2, highVol: 0.12, subFreq: 90, bodyStart: 130, bodyEnd: 48, decay: 0.1, pan: 0.08 },
+    launcher: {
+      subVol: 0.9,
+      midVol: 0.3,
+      highVol: 0.12,
+      subFreq: 48,
+      bodyStart: 90,
+      bodyEnd: 22,
+      decay: 0.55,
+      pan: 0.05,
+    },
   };
 
   function shotLayer(c, cfg, delayOffset = 0) {
@@ -627,10 +741,20 @@ export function createAudio() {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(cfg.subVol, now + 0.003);
       g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-      let pan; try { pan = c.createStereoPanner(); pan.pan.value = cfg.pan; } catch (e) { pan = c.createGain(); }
-      src.connect(filt); filt.connect(g); g.connect(pan); pan.connect(master);
+      let pan;
+      try {
+        pan = c.createStereoPanner();
+        pan.pan.value = cfg.pan;
+      } catch (e) {
+        pan = c.createGain();
+      }
+      src.connect(filt);
+      filt.connect(g);
+      g.connect(pan);
+      pan.connect(master);
       sendToReverb(c, g, 0.15);
-      src.start(now); src.stop(now + dur + 0.01);
+      src.start(now);
+      src.stop(now + dur + 0.01);
     }
 
     // 2. Mid crack (bandpass 300-1200 Hz)
@@ -647,9 +771,19 @@ export function createAudio() {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(cfg.midVol, now + 0.004);
       g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-      let pan; try { pan = c.createStereoPanner(); pan.pan.value = cfg.pan + (Math.random() * 0.06 - 0.03); } catch (e) { pan = c.createGain(); }
-      src.connect(filt); filt.connect(g); g.connect(pan); pan.connect(master);
-      src.start(now); src.stop(now + dur + 0.01);
+      let pan;
+      try {
+        pan = c.createStereoPanner();
+        pan.pan.value = cfg.pan + (Math.random() * 0.06 - 0.03);
+      } catch (e) {
+        pan = c.createGain();
+      }
+      src.connect(filt);
+      filt.connect(g);
+      g.connect(pan);
+      pan.connect(master);
+      src.start(now);
+      src.stop(now + dur + 0.01);
     }
 
     // 3. High snap (highpass 3k-8kHz, very short)
@@ -665,9 +799,19 @@ export function createAudio() {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(cfg.highVol, now + 0.002);
       g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-      let pan; try { pan = c.createStereoPanner(); pan.pan.value = cfg.pan; } catch (e) { pan = c.createGain(); }
-      src.connect(filt); filt.connect(g); g.connect(pan); pan.connect(master);
-      src.start(now); src.stop(now + dur + 0.005);
+      let pan;
+      try {
+        pan = c.createStereoPanner();
+        pan.pan.value = cfg.pan;
+      } catch (e) {
+        pan = c.createGain();
+      }
+      src.connect(filt);
+      filt.connect(g);
+      g.connect(pan);
+      pan.connect(master);
+      src.start(now);
+      src.stop(now + dur + 0.005);
     }
 
     // 4. Body tone (oscillator pitch drop)
@@ -681,9 +825,18 @@ export function createAudio() {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(cfg.subVol * 0.5, now + 0.005);
       g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-      let pan; try { pan = c.createStereoPanner(); pan.pan.value = cfg.pan; } catch (e) { pan = c.createGain(); }
-      osc.connect(g); g.connect(pan); pan.connect(master);
-      osc.start(now); osc.stop(now + dur + 0.01);
+      let pan;
+      try {
+        pan = c.createStereoPanner();
+        pan.pan.value = cfg.pan;
+      } catch (e) {
+        pan = c.createGain();
+      }
+      osc.connect(g);
+      g.connect(pan);
+      pan.connect(master);
+      osc.start(now);
+      osc.stop(now + dur + 0.01);
     }
   }
 
@@ -697,7 +850,7 @@ export function createAudio() {
       // Multiple burst layers for pellet spread
       shotLayer(c, cfg, 0);
       shotLayer(c, { ...cfg, subVol: cfg.subVol * 0.45, midVol: cfg.midVol * 0.4, highVol: cfg.highVol * 0.5 }, 0.012);
-      shotLayer(c, { ...cfg, subVol: cfg.subVol * 0.3,  midVol: cfg.midVol * 0.3, highVol: cfg.highVol * 0.4 }, 0.024);
+      shotLayer(c, { ...cfg, subVol: cfg.subVol * 0.3, midVol: cfg.midVol * 0.3, highVol: cfg.highVol * 0.4 }, 0.024);
     } else {
       shotLayer(c, cfg, 0);
     }
@@ -714,14 +867,19 @@ export function createAudio() {
     burstNoise(c, master, 'highpass', 2000, 0.8, 0.055, 0.001, 0.018, pan);
 
     // Impact: formant thud
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'sine', 150, 55, 0.08, 0.004, 0.09, pan);
-      // Flesh crack: bandpass 800Hz
-      burstNoise(cc, master, 'bandpass', 800, 3, 0.06, 0.003, 0.065, pan);
-      // Blood splat: short pink-ish noise at 600Hz
-      burstNoise(cc, master, 'bandpass', 600, 1.5, 0.04, 0.002, 0.05, pan);
-    }, 0.018);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'sine', 150, 55, 0.08, 0.004, 0.09, pan);
+        // Flesh crack: bandpass 800Hz
+        burstNoise(cc, master, 'bandpass', 800, 3, 0.06, 0.003, 0.065, pan);
+        // Blood splat: short pink-ish noise at 600Hz
+        burstNoise(cc, master, 'bandpass', 600, 1.5, 0.04, 0.002, 0.05, pan);
+      },
+      0.018,
+    );
   }
 
   // ── Reload ───────────────────────────────────────────────────────────────
@@ -734,18 +892,28 @@ export function createAudio() {
     // Magazine release: metallic rattle 2-4kHz
     burstNoise(c, master, 'bandpass', 2800, 5, 0.06, 0.005, 0.055, pan);
 
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      // Magazine insertion: slightly lower rattle
-      burstNoise(cc, master, 'bandpass', 2000, 4, 0.055, 0.005, 0.06, pan);
-    }, 0.12);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        // Magazine insertion: slightly lower rattle
+        burstNoise(cc, master, 'bandpass', 2000, 4, 0.055, 0.005, 0.06, pan);
+      },
+      0.12,
+    );
 
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      // Slide/bolt: crisp metal click 3-5kHz, very short
-      burstNoise(cc, master, 'bandpass', 3800, 6, 0.07, 0.002, 0.028, pan);
-      burstOsc(cc, master, 'square', 1200, 900, 0.03, 0.002, 0.025, pan);
-    }, 0.3);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        // Slide/bolt: crisp metal click 3-5kHz, very short
+        burstNoise(cc, master, 'bandpass', 3800, 6, 0.07, 0.002, 0.028, pan);
+        burstOsc(cc, master, 'square', 1200, 900, 0.03, 0.002, 0.025, pan);
+      },
+      0.3,
+    );
   }
 
   // ── Empty click ──────────────────────────────────────────────────────────
@@ -765,10 +933,15 @@ export function createAudio() {
     if (!c) return;
     const pan = (Math.random() * 2 - 1) * 0.25;
     burstOsc(c, master, 'triangle', 720, 840, 0.06, 0.01, 0.06, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstNoise(cc, master, 'bandpass', 1800, 1.4, 0.025, 0.005, 0.075, pan);
-    }, 0.02);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstNoise(cc, master, 'bandpass', 1800, 1.4, 0.025, 0.005, 0.075, pan);
+      },
+      0.02,
+    );
   }
 
   // ── Objective ────────────────────────────────────────────────────────────
@@ -777,10 +950,15 @@ export function createAudio() {
     const c = ensure();
     if (!c) return;
     burstOsc(c, master, 'sawtooth', 172, 114, 0.082, 0.01, 0.21, 0);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 420, 500, 0.058, 0.01, 0.15, 0);
-    }, 0.09);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 420, 500, 0.058, 0.01, 0.15, 0);
+      },
+      0.09,
+    );
     radioWhisper(0.55);
   }
 
@@ -794,10 +972,25 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.12;
     burstNoise(c, master, 'bandpass', intense ? 180 : 240, 0.55, intense ? 0.16 : 0.12, 0.02, 0.4, pan);
     burstOsc(c, master, 'sawtooth', intense ? 42 : 52, intense ? 26 : 36, intense ? 0.1 : 0.072, 0.01, 0.57, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', intense ? 360 : 290, intense ? 210 : 140, intense ? 0.04 : 0.026, 0.01, 0.11, pan);
-    }, 0.08);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(
+          cc,
+          master,
+          'triangle',
+          intense ? 360 : 290,
+          intense ? 210 : 140,
+          intense ? 0.04 : 0.026,
+          0.01,
+          0.11,
+          pan,
+        );
+      },
+      0.08,
+    );
     if (reason === 'lab' || reason === 'medbay') at(c, () => distantScream(0.85), 0.28);
   }
 
@@ -834,10 +1027,15 @@ export function createAudio() {
       // Crumple: impact thud + dying moan
       burstOsc(c, master, 'sine', 95, 42, 0.065, 0.005, 0.22, pan);
       burstNoise(c, master, 'bandpass', 240, 1.5, 0.05, 0.005, 0.21, pan);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        formantNoise(cc, master, FORMANTS.moan, 0.38, 0.035, pan, true);
-      }, 0.08);
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          formantNoise(cc, master, FORMANTS.moan, 0.38, 0.035, pan, true);
+        },
+        0.08,
+      );
     }
 
     // Always: body-fall thud (low thump 80Hz)
@@ -869,11 +1067,16 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.3;
     burstNoise(c, master, 'highpass', 1800, 0.75, 0.11, 0.005, 0.175, pan);
     burstOsc(c, master, 'sawtooth', 680, 250, 0.038, 0.01, 0.17, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 72, 54, 0.05, 0.01, 0.17, pan);
-      formantNoise(cc, master, FORMANTS.growl, 0.28, 0.038, pan, false);
-    }, 0.08);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 72, 54, 0.05, 0.01, 0.17, pan);
+        formantNoise(cc, master, FORMANTS.growl, 0.28, 0.038, pan, false);
+      },
+      0.08,
+    );
   }
 
   // ── Explosion ────────────────────────────────────────────────────────────
@@ -923,8 +1126,11 @@ export function createAudio() {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(0.4, now + 0.005);
       g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      src.connect(lp); lp.connect(g); g.connect(dest);
-      src.start(now); src.stop(now + duration + 0.05);
+      src.connect(lp);
+      lp.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + duration + 0.05);
     }
 
     expReverbGain.gain.setValueAtTime(1, c.currentTime);
@@ -942,21 +1148,39 @@ export function createAudio() {
     slam(1.85);
     burstOsc(c, master, 'sawtooth', 38, 28, 0.14, 0.02, 1.23, 0);
     at(c, () => distantScream(1.55), 0.52);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'sine', 42, 22, 0.12, 0.01, 0.9, 0);
-    }, 0.28);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'sine', 42, 22, 0.12, 0.01, 0.9, 0);
+      },
+      0.28,
+    );
   }
 
   // ── Facility ─────────────────────────────────────────────────────────────
 
   function facility(kind = '') {
-    if (kind === 'generator') { alarm(1.05); metalCreak(1.15); return; }
-    if (kind === 'armory')    { metalCreak(1.25); alarm(0.8); return; }
-    if (kind === 'lab')       { radioWhisper(1.25); distantScream(1.05); return; }
-    if (kind === 'medbay')    {
+    if (kind === 'generator') {
+      alarm(1.05);
+      metalCreak(1.15);
+      return;
+    }
+    if (kind === 'armory') {
+      metalCreak(1.25);
+      alarm(0.8);
+      return;
+    }
+    if (kind === 'lab') {
+      radioWhisper(1.25);
+      distantScream(1.05);
+      return;
+    }
+    if (kind === 'medbay') {
       radioWhisper(0.9);
-      const c = ensure(); if (!c) return;
+      const c = ensure();
+      if (!c) return;
       at(c, () => burstOsc(ensure(), master, 'sine', 880, 700, 0.025, 0.005, 0.075, 0), 0.08);
       return;
     }
@@ -969,10 +1193,15 @@ export function createAudio() {
     alarm(0.85);
     const c = ensure();
     if (!c) return;
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'sawtooth', 146, 218, 0.06, 0.01, 0.49, 0);
-    }, 0.12);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'sawtooth', 146, 218, 0.06, 0.01, 0.49, 0);
+      },
+      0.12,
+    );
     radioWhisper(1.1);
   }
 
@@ -994,14 +1223,24 @@ export function createAudio() {
     if (!c) return;
     const pan = (Math.random() * 2 - 1) * 0.15;
     burstOsc(c, master, 'triangle', 520, 640, 0.06, 0.01, 0.07, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 840, 760, 0.045, 0.01, 0.09, pan);
-    }, 0.08);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstNoise(cc, master, 'highpass', 2400, 0.55, 0.025, 0.005, 0.155, pan);
-    }, 0);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 840, 760, 0.045, 0.01, 0.09, pan);
+      },
+      0.08,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstNoise(cc, master, 'highpass', 2400, 0.55, 0.025, 0.005, 0.155, pan);
+      },
+      0,
+    );
   }
 
   // ── Player death ─────────────────────────────────────────────────────────
@@ -1023,10 +1262,15 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.18;
     burstNoise(c, master, 'bandpass', 240, 0.5, 0.05 * amount, 0.02, 0.68, pan);
     burstOsc(c, master, 'sawtooth', 54, 32, 0.052 * amount, 0.01, 0.81, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 118, 70, 0.024 * amount, 0.01, 0.17, pan);
-    }, 0.18);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 118, 70, 0.024 * amount, 0.01, 0.17, pan);
+      },
+      0.18,
+    );
   }
 
   // ── First blood ──────────────────────────────────────────────────────────
@@ -1035,14 +1279,24 @@ export function createAudio() {
     const c = ensure();
     if (!c) return;
     slam(1.1);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 480, 800, 0.07, 0.01, 0.13, 0);
-    }, 0.06);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 860, 1040, 0.055, 0.01, 0.11, 0);
-    }, 0.1);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 480, 800, 0.07, 0.01, 0.13, 0);
+      },
+      0.06,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 860, 1040, 0.055, 0.01, 0.11, 0);
+      },
+      0.1,
+    );
   }
 
   // ── Level up ─────────────────────────────────────────────────────────────
@@ -1052,15 +1306,25 @@ export function createAudio() {
     if (!c) return;
     const pan = (Math.random() * 2 - 1) * 0.1;
     burstOsc(c, master, 'triangle', 520, 720, 0.07, 0.01, 0.08, pan);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 780, 920, 0.065, 0.01, 0.09, pan);
-    }, 0.08);
-    at(c, () => {
-      const cc = ensure(); if (!cc) return;
-      burstOsc(cc, master, 'triangle', 1040, 1160, 0.055, 0.01, 0.09, pan);
-      burstNoise(cc, master, 'highpass', 3200, 0.6, 0.03, 0.005, 0.215, pan);
-    }, 0.16);
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 780, 920, 0.065, 0.01, 0.09, pan);
+      },
+      0.08,
+    );
+    at(
+      c,
+      () => {
+        const cc = ensure();
+        if (!cc) return;
+        burstOsc(cc, master, 'triangle', 1040, 1160, 0.055, 0.01, 0.09, pan);
+        burstNoise(cc, master, 'highpass', 3200, 0.6, 0.03, 0.005, 0.215, pan);
+      },
+      0.16,
+    );
   }
 
   // ── Combo milestone ──────────────────────────────────────────────────────
@@ -1071,44 +1335,81 @@ export function createAudio() {
     const pan = (Math.random() * 2 - 1) * 0.12;
     if (tier >= 3) {
       slam(0.9);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 640, 920, 0.08, 0.01, 0.14, pan);
-      }, 0.05);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 960, 1120, 0.07, 0.01, 0.12, pan);
-      }, 0.08);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 1280, 1440, 0.06, 0.01, 0.10, pan);
-      }, 0.11);
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 640, 920, 0.08, 0.01, 0.14, pan);
+        },
+        0.05,
+      );
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 960, 1120, 0.07, 0.01, 0.12, pan);
+        },
+        0.08,
+      );
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 1280, 1440, 0.06, 0.01, 0.1, pan);
+        },
+        0.11,
+      );
     } else if (tier === 2) {
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 700, 940, 0.07, 0.01, 0.11, pan);
-      }, 0.04);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 1050, 1170, 0.06, 0.01, 0.10, pan);
-      }, 0.07);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 1400, 1460, 0.05, 0.01, 0.09, pan);
-      }, 0.10);
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 700, 940, 0.07, 0.01, 0.11, pan);
+        },
+        0.04,
+      );
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 1050, 1170, 0.06, 0.01, 0.1, pan);
+        },
+        0.07,
+      );
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 1400, 1460, 0.05, 0.01, 0.09, pan);
+        },
+        0.1,
+      );
     } else {
       burstOsc(c, master, 'triangle', 800, 1000, 0.07, 0.01, 0.08, pan);
-      at(c, () => {
-        const cc = ensure(); if (!cc) return;
-        burstOsc(cc, master, 'triangle', 1200, 1300, 0.055, 0.01, 0.09, pan);
-      }, 0.07);
+      at(
+        c,
+        () => {
+          const cc = ensure();
+          if (!cc) return;
+          burstOsc(cc, master, 'triangle', 1200, 1300, 0.055, 0.01, 0.09, pan);
+        },
+        0.07,
+      );
     }
   }
 
   // ── Exported API ─────────────────────────────────────────────────────────
 
   return {
-    get enabled() { return enabled; },
+    get enabled() {
+      return enabled;
+    },
     setEnabled,
     unlock,
     update,

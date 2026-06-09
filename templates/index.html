@@ -36,7 +36,7 @@
         position: fixed;
         z-index: 10;
         background: linear-gradient(180deg, rgba(16, 20, 28, 0.55), rgba(7, 10, 15, 0.48));
-        border: 1px solid rgba(210, 232, 255, 0.10);
+        border: 1px solid rgba(210, 232, 255, 0.1);
         box-shadow:
           0 14px 36px rgba(0, 0, 0, 0.22),
           inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -948,8 +948,12 @@
         font-size: 13px;
       }
       @keyframes pulse {
-        from { opacity: 0.6; }
-        to { opacity: 1; }
+        from {
+          opacity: 0.6;
+        }
+        to {
+          opacity: 1;
+        }
       }
       #pause-overlay {
         position: fixed;
@@ -1203,6 +1207,6 @@
     <script src="/static/js/netcode.js?v=62"></script>
     <script src="/static/js/game/messages.js?v=62"></script>
     <script src="/static/js/game/scene_filter.js?v=62"></script>
-    <script type="module" src="/static/js/game/app.js?v=68"></script>
+    <script type="module" src="/static/js/game/app.js?v=69"></script>
   </body>
 </html>

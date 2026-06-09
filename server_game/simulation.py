@@ -29,6 +29,7 @@ from .config import (
     COMBO_WINDOW,
     DASH_CD,
     DASH_DIST,
+    DIFFICULTY_PLAYER_CAP,
     DIRECTOR_CHECK_DT,
     DIRECTOR_LEASH_AFTER,
     DIRECTOR_LEASH_RADIUS,
@@ -204,6 +205,7 @@ ROOM_NAV_NEIGHBOR_LIMIT = 14
 ROOM_PATH_ENDPOINT_NEIGHBORS = 10
 STAGE_FAILURE_REASONS = frozenset(("wipe", "abandon", "extraction_failed"))
 OBJECTIVE_ITEM_TYPES = frozenset(("fuse", "sample", "keycard", "lore"))
+TEMPORARY_LOOT_TYPES = ("rapid", "spread", "adrenaline", "damage_boost")
 ROOM_HAZARD_DPS = {
     "lab": 0.9,
     "archive": 0.45,
@@ -325,7 +327,6 @@ class Game:
         self.extract_point = (MAP_W // 2, MAP_H // 2)
         self.extractions = []
         self.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
-        self._task_spawned = {"fuse": 0, "sample": 0, "keycard": 0}
         self.stage_director = {}
         self.next_stage_reveal = False
         self.mission = None
@@ -367,7 +368,7 @@ class Game:
         self._gen_obstacles()
         self._start_stage_tasks()
         alive = max(1, sum(1 for p in self.players.values() if not p.get("dead") and not p.get("paused")))
-        scale = 0.4 + 0.6 * alive / MAX_PLAYERS
+        scale = self._player_pressure_scale(alive)
         initial_count = min(int((INITIAL_ZOMBIES + self.wave * 4) * scale), self.wave_remaining)
         self._golden_spawned = 0
         self._golden_quota = (1 + (self.wave - 3) // 2) if self.wave >= 3 else 0
@@ -384,7 +385,11 @@ class Game:
     def _wave_budget(self):
         base = WAVE_BASE + (self.wave - 1) * WAVE_STEP
         alive = max(1, sum(1 for p in self.players.values() if not p.get("dead")))
-        return max(1, int(base * (0.4 + 0.6 * alive / MAX_PLAYERS)))
+        return max(1, int(base * self._player_pressure_scale(alive)))
+
+    def _player_pressure_scale(self, alive):
+        cap = max(1, DIFFICULTY_PLAYER_CAP)
+        return 0.4 + 0.6 * min(max(1, alive), cap) / cap
 
     def _kill_threshold(self):
         pct = 0.35 if self.wave == 1 else 0.42 if self.wave == 2 else 0.50
@@ -419,6 +424,95 @@ class Game:
             return sum(player.get("lore", 0) for player in self.players.values())
         return self.task_counts.get(typ, 0)
 
+    def _objective_needs(self):
+        needs = {}
+        for exit_point in self.extractions:
+            if exit_point.get("done"):
+                continue
+            for typ, amount in exit_point.get("requires", {}).items():
+                if typ in self.task_counts and amount > 0:
+                    needs[typ] = max(needs.get(typ, 0), amount)
+        return needs
+
+    def _objective_goal(self, typ):
+        return max(0, self._objective_needs().get(typ, 0))
+
+    def _objective_items_on_map(self, typ):
+        return sum(1 for item in self.items.values() if item.get("type") == typ)
+
+    def _objective_slots_left(self, typ):
+        return max(0, self._objective_goal(typ) - self.task_counts.get(typ, 0) - self._objective_items_on_map(typ))
+
+    def _loot_players(self, scene=None):
+        players = [
+            player for player in self.players.values()
+            if not player.get("dead") and (scene is None or self._entity_scene(player) == scene)
+        ]
+        return players or [player for player in self.players.values() if not player.get("dead")]
+
+    def _average_hp_ratio(self, players):
+        if not players:
+            return 1.0
+        ratios = [
+            max(0.0, min(1.0, player.get("hp", player.get("max_hp", PLAYER_MAX_HP)) / max(1, player.get("max_hp", PLAYER_MAX_HP))))
+            for player in players
+        ]
+        return sum(ratios) / len(ratios)
+
+    def _average_current_ammo_fill(self, players):
+        if not players:
+            return 0.45
+        fills = []
+        for player in players:
+            ammo_type = ammo_type_for_weapon(player.get("weapon_id", "pistol"))
+            max_reserve = max(1, self._max_reserve_for_player(player, ammo_type))
+            fills.append(self._ammo_reserve(player, ammo_type) / max_reserve)
+        return sum(fills) / len(fills)
+
+    def _materials_per_player(self, players):
+        if not players:
+            return 0.0
+        return sum(max(0, player.get("materials", 0)) for player in players) / len(players)
+
+    def _random_loot_type(self, scene=SCENE_MAIN):
+        players = self._loot_players(scene)
+        hp_ratio = self._average_hp_ratio(players)
+        ammo_fill = self._average_current_ammo_fill(players)
+        materials = self._materials_per_player(players)
+        names = []
+        weights = []
+        for name, meta in ITEM_TYPES.items():
+            weight = float(meta.get("weight", 0))
+            if weight <= 0:
+                continue
+            if name == "medkit":
+                weight *= 1.75 if hp_ratio < 0.48 else 0.38 if hp_ratio > 0.86 else 1.0
+            elif name == "ammo":
+                weight *= 1.65 if ammo_fill < 0.34 else 0.30 if ammo_fill > 0.78 else 1.0
+            elif name == "parts":
+                soft_bank = 6 + self.wave * 1.8
+                weight *= 1.25 if materials < 3 else 0.34 if materials > soft_bank else 1.0
+            elif name == "nuke":
+                weight *= 0.35 if self.wave < 3 else 0.65
+            elif name in TEMPORARY_LOOT_TYPES and ammo_fill > 0.78 and hp_ratio > 0.78:
+                weight *= 1.18
+            if weight > 0:
+                names.append(name)
+                weights.append(weight)
+        return random.choices(names, weights=weights)[0] if names else "parts"
+
+    def _balanced_drop_type(self, item_type, scene=SCENE_MAIN):
+        players = self._loot_players(scene)
+        if not players:
+            return item_type
+        ammo_fill = self._average_current_ammo_fill(players)
+        materials = self._materials_per_player(players)
+        if item_type == "ammo" and ammo_fill > 0.84:
+            return "parts" if materials < 6 + self.wave else random.choice(TEMPORARY_LOOT_TYPES)
+        if item_type == "parts" and materials > 8 + self.wave * 2:
+            return random.choice(TEMPORARY_LOOT_TYPES)
+        return item_type
+
     def _exit_ready(self, exit_point):
         return all(self._resource_count(typ) >= needed for typ, needed in exit_point.get("requires", {}).items())
 
@@ -430,13 +524,13 @@ class Game:
             "shell": 6 + min(6, self.wave // 2),
         }
 
-    def _ammo_reward_text(self, amounts):
+    def _ammo_reward_text(self, amounts, prefix="全队补充"):
         parts = [
             f"{AMMO_TYPE_LABELS.get(ammo_type, ammo_type)} +{amount}"
             for ammo_type, amount in amounts.items()
             if amount > 0
         ]
-        return "全队补充：" + "、".join(parts)
+        return f"{prefix}：" + "、".join(parts) if parts else "弹药已达上限，未额外补充"
 
     def _stage_director_for_wave(self):
         variants = [
@@ -496,7 +590,7 @@ class Game:
             "service": {
                 "route": "service",
                 "rewardTitle": "弹药缓存",
-                "rewardText": self._ammo_reward_text(self._service_ammo_reward_amounts()),
+                "rewardText": self._ammo_reward_text(self._service_ammo_reward_amounts(), prefix="撤离奖励上限"),
                 "shortReward": "常规弹药",
                 "routeHook": "维修通道深处传来金属敲击，像有人在给下一层装弹。",
             },
@@ -592,7 +686,6 @@ class Game:
 
     def _start_stage_tasks(self):
         self._golden_spawned = 0
-        self._task_spawned = {"fuse": 0, "sample": 0, "keycard": 0}
         self.stage_director = self._stage_director_for_wave()
         self.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
         self.lab_sample_until = 0.0
@@ -602,8 +695,10 @@ class Game:
         fuse_goal = max((exit_point.get("requires", {}).get("fuse", 0) for exit_point in self.extractions), default=0)
         if fuse_goal > 0:
             pre_spawn = max(1, fuse_goal - 1)
-            spawned = sum(1 for _ in range(min(pre_spawn, TASK_PICKUPS_PER_STAGE)) if self.spawn_item(item_type="fuse", emit=False))
-            self._task_spawned["fuse"] = spawned
+            for _ in range(min(pre_spawn, TASK_PICKUPS_PER_STAGE)):
+                if self._objective_slots_left("fuse") <= 0:
+                    break
+                self.spawn_item(item_type="fuse", emit=False)
         if (self.stage_director or {}).get("focus") == "sample":
             for _ in range(2):
                 self.spawn_item(item_type="ammo", emit=False)
@@ -2572,9 +2667,9 @@ class Game:
         if any(pt_in_rect(x, y, o["x"], o["y"], o["w"], o["h"]) for o in self._near_obstacles(x, y, ITEM_R + MAZE_WALL, scene=scene)):
             return None
         if item_type is None:
-            names = list(ITEM_TYPES.keys())
-            weights = [ITEM_TYPES[name]["weight"] for name in names]
-            item_type = random.choices(names, weights=weights)[0]
+            item_type = self._random_loot_type(scene)
+        elif not force and item_type not in OBJECTIVE_ITEM_TYPES and not item_type.startswith("weapon_"):
+            item_type = self._balanced_drop_type(item_type, scene)
         meta = ITEM_TYPES[item_type]
         iid = self._next_i
         self._next_i += 1
@@ -2776,18 +2871,27 @@ class Game:
         typ = item["type"]
         item_meta = ITEM_TYPES.get(typ, {})
         if ITEM_TYPES.get(typ, {}).get("task"):
-            self.task_counts[typ] = self.task_counts.get(typ, 0) + 1
-            self._emit("task_update", {
-                "pid": sid,
-                "type": typ,
-                "name": item["name"],
-                "count": self.task_counts[typ],
-                "task": self._task_summary(),
-                "x": round(item["x"], 1),
-                "y": round(item["y"], 1),
-                "col": item["color"],
-                "sceneId": self._entity_scene(item),
-            })
+            if self.task_counts.get(typ, 0) < self._objective_goal(typ):
+                self.task_counts[typ] = self.task_counts.get(typ, 0) + 1
+                self._emit("task_update", {
+                    "pid": sid,
+                    "type": typ,
+                    "name": item["name"],
+                    "count": self.task_counts[typ],
+                    "task": self._task_summary(),
+                    "x": round(item["x"], 1),
+                    "y": round(item["y"], 1),
+                    "col": item["color"],
+                    "sceneId": self._entity_scene(item),
+                })
+            else:
+                recycled = 2 if typ == "keycard" else 1
+                player["materials"] = player.get("materials", 0) + recycled
+                item["amount"] = recycled
+                item["name"] = f"回收{item['name']}"
+                item["icon"] = ITEM_TYPES["parts"]["icon"]
+                item["color"] = ITEM_TYPES["parts"]["color"]
+                typ = "parts"
         elif typ == "rapid":
             player["rapid_until"] = now + 7.5
         elif typ == "spread":
@@ -2809,17 +2913,29 @@ class Game:
         elif typ == "ammo" or item_meta.get("ammo_type"):
             ammo_type = item_meta.get("ammo_type") or ammo_type_for_weapon(player.get("weapon_id", "pistol"))
             if typ == "ammo" and ammo_type == "explosive":
-                unlocked = set(self._unlocked_weapon_ids(player))
                 candidates = [ammo_type_for_weapon(wid) for wid in self._unlocked_weapon_ids(player) if wid != "launcher"]
                 ammo_type = random.choice(candidates or ["pistol"])
             lo, hi = AMMO_PICKUP_BY_TYPE.get(ammo_type, (AMMO_PICKUP_MIN, AMMO_PICKUP_MAX))
             amount = random.randint(lo, hi)
-            self._add_ammo_reserve(player, ammo_type, amount)
-            self._sync_weapon_fields(player)
-            item["amount"] = amount
-            item["ammo_type"] = ammo_type
+            before = self._ammo_reserve(player, ammo_type)
+            after = self._add_ammo_reserve(player, ammo_type, amount)
+            gained = max(0, after - before)
+            if gained > 0:
+                self._sync_weapon_fields(player)
+                item["amount"] = gained
+                item["ammo_type"] = ammo_type
+            else:
+                recycled = 1 if ammo_type != "explosive" else 2
+                player["materials"] = player.get("materials", 0) + recycled
+                item["amount"] = recycled
+                item["name"] = "回收弹药"
+                item["icon"] = ITEM_TYPES["parts"]["icon"]
+                item["color"] = ITEM_TYPES["parts"]["color"]
+                typ = "parts"
         elif typ == "parts":
-            wave_bonus = min(2, self.wave // 3)
+            players = self._loot_players(self._entity_scene(player))
+            rich_bank = self._materials_per_player(players) > 8 + self.wave * 2
+            wave_bonus = 0 if rich_bank else min(1, self.wave // 4)
             amount = random.randint(MATERIAL_PICKUP_MIN + wave_bonus, MATERIAL_PICKUP_MAX + wave_bonus)
             player["materials"] = player.get("materials", 0) + amount
             item["amount"] = amount
@@ -2906,39 +3022,34 @@ class Game:
             return
         ztype = (zombie or {}).get("type")
         scene = self._entity_scene(zombie or {})
-        if ztype in ("warden", "boss") and random.random() < 0.40:
+        if ztype in ("warden", "boss") and random.random() < 0.34:
             self.spawn_item(x, y, item_type=random.choice(("shield", "ammo_explosive", "parts", "parts")), scene=scene)
             return
-        if ztype in ("screamer", "bloater", "spitter") and random.random() < 0.18:
+        if ztype in ("screamer", "bloater", "spitter") and random.random() < 0.11:
             self.spawn_item(x, y, item_type="shield", scene=scene)
             return
-        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss", "warden") and random.random() < 0.28:
+        if ztype in ("brute", "armored", "leaper", "screamer", "bloater", "boss", "warden") and random.random() < 0.19:
             self.spawn_item(x, y, item_type="parts", scene=scene)
             return
-        if ztype in ("runner", "crawler", "toxic") and random.random() < 0.16:
+        if ztype in ("runner", "crawler", "toxic") and random.random() < 0.09:
             self.spawn_item(x, y, item_type=random.choice(("ammo", "parts")), scene=scene)
             return
         roll = random.random()
-        if roll < 0.06:
+        if roll < 0.04:
             self.spawn_item(x, y, item_type="ammo", scene=scene)
-        elif roll < 0.14:
+        elif roll < 0.09:
             self.spawn_item(x, y, item_type="parts", scene=scene)
-        elif roll < 0.17:
+        elif roll < 0.11:
             self.spawn_item(x, y, scene=scene)
 
     def _try_drop_task_item(self, zombie, now=None):
         if len(self.items) >= self._max_items:
             return
-        needs = {}
-        for ep in self.extractions:
-            for k, v in ep.get("requires", {}).items():
-                if v > 0:
-                    needs[k] = max(needs.get(k, 0), v)
-        if not needs:
+        if not self._objective_needs():
             return
 
         def _quota_left(typ):
-            return max(0, needs.get(typ, 0) - self._task_spawned.get(typ, 0))
+            return self._objective_slots_left(typ)
 
         ztype = zombie.get("type")
         item_type = None
@@ -2950,19 +3061,17 @@ class Game:
             if random.random() < 0.35:
                 item_type = "fuse"
         if item_type:
-            self._task_spawned["fuse"] = self._task_spawned.get("fuse", 0) + 1
             self.spawn_item(zombie["x"], zombie["y"], item_type=item_type, scene=self._entity_scene(zombie))
             return
         if _quota_left("sample") > 0 and ztype in ("toxic", "screamer", "bloater"):
             item_type = "sample" if random.random() < (0.28 if lab_boost else 0.14) else None
         elif _quota_left("keycard") > 0 and ztype in ("brute", "armored", "boss"):
-            if not any(i.get("type") == "keycard" for i in self.items.values()):
+            if self._objective_items_on_map("keycard") <= 0:
                 item_type = "keycard" if random.random() < 0.25 else None
         elif _quota_left("keycard") > 0 and ztype == "runner" and random.random() < 0.10:
-            if not any(i.get("type") == "keycard" for i in self.items.values()):
+            if self._objective_items_on_map("keycard") <= 0:
                 item_type = "keycard"
         if item_type:
-            self._task_spawned[item_type] = self._task_spawned.get(item_type, 0) + 1
             self.spawn_item(zombie["x"], zombie["y"], item_type=item_type, scene=self._entity_scene(zombie))
 
     def _item_pickup_reached(self, player, item):
@@ -3255,18 +3364,11 @@ class Game:
     def _spawn_room_rewards(self, room, effect, player, scene_id):
         spawned = []
         primary_spawned = False
-        needs = {}
-        for ep in self.extractions:
-            for k, v in ep.get("requires", {}).items():
-                if v > 0:
-                    needs[k] = max(needs.get(k, 0), v)
-        def _on_map(typ):
-            return sum(1 for i in self.items.values() if i.get("type") == typ)
         def _still_need(typ):
-            return max(0, needs.get(typ, 0) - self.task_counts.get(typ, 0) - _on_map(typ))
+            return self._objective_slots_left(typ)
         for index, item_type in enumerate(self._room_reward_types(room, effect, player)):
             actual_type = item_type
-            if item_type in OBJECTIVE_ITEM_TYPES and _still_need(item_type) <= 0:
+            if item_type in self.task_counts and _still_need(item_type) <= 0:
                 actual_type = "parts"
             iid = self._spawn_item_in_feature(room, actual_type, emit=True, scene=scene_id)
             if iid is not None:
@@ -4460,14 +4562,21 @@ class Game:
         affected = 0
         if route == "service":
             amounts = self._service_ammo_reward_amounts()
+            actual = {ammo_type: 0 for ammo_type in amounts}
             for player in self.players.values():
                 for ammo_type, amount in amounts.items():
-                    self._add_ammo_reserve(player, ammo_type, amount)
+                    before = self._ammo_reserve(player, ammo_type)
+                    after = self._add_ammo_reserve(player, ammo_type, amount)
+                    actual[ammo_type] += max(0, after - before)
                 self._sync_weapon_fields(player)
                 affected += 1
-            reward["amount"] = sum(amounts.values())
-            reward["ammo"] = dict(amounts)
-            reward["rewardText"] = self._ammo_reward_text(amounts)
+            per_player = {
+                ammo_type: int(round(amount / max(1, affected)))
+                for ammo_type, amount in actual.items()
+            }
+            reward["amount"] = sum(actual.values())
+            reward["ammo"] = per_player
+            reward["rewardText"] = self._ammo_reward_text(per_player, prefix="全队实际补充")
         elif route == "lab":
             self.next_stage_reveal = True
             for sid, player in self.players.items():

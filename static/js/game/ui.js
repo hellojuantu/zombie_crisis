@@ -619,17 +619,22 @@ export function createUI() {
     if (bossBarEl) return;
     bossBarEl = document.createElement('div');
     bossBarEl.id = 'boss-bar';
-    bossBarEl.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);width:320px;z-index:55;display:none;text-align:center;';
-    bossBarEl.innerHTML = '<div style="color:#ff4d7a;font-size:11px;letter-spacing:1px;margin-bottom:3px;text-shadow:0 0 8px #ff4d7a88">重型感染体</div>'
-      + '<div style="background:#1a0a0a;border:1px solid #ff4d7a44;border-radius:4px;height:10px;overflow:hidden;">'
-      + '<div id="boss-bar-fill" style="height:100%;background:linear-gradient(90deg,#d9445f,#ff4d7a);transition:width 0.3s;width:100%;"></div></div>'
-      + '<div id="boss-bar-text" style="color:#ff9bb6;font-size:10px;margin-top:2px;"></div>';
+    bossBarEl.style.cssText =
+      'position:fixed;top:8px;left:50%;transform:translateX(-50%);width:320px;z-index:55;display:none;text-align:center;';
+    bossBarEl.innerHTML =
+      '<div style="color:#ff4d7a;font-size:11px;letter-spacing:1px;margin-bottom:3px;text-shadow:0 0 8px #ff4d7a88">重型感染体</div>' +
+      '<div style="background:#1a0a0a;border:1px solid #ff4d7a44;border-radius:4px;height:10px;overflow:hidden;">' +
+      '<div id="boss-bar-fill" style="height:100%;background:linear-gradient(90deg,#d9445f,#ff4d7a);transition:width 0.3s;width:100%;"></div></div>' +
+      '<div id="boss-bar-text" style="color:#ff9bb6;font-size:10px;margin-top:2px;"></div>';
     document.body.appendChild(bossBarEl);
   }
 
   function setBossBar(boss) {
     ensureBossBar();
-    if (!boss) { bossBarEl.style.display = 'none'; return; }
+    if (!boss) {
+      bossBarEl.style.display = 'none';
+      return;
+    }
     bossBarEl.style.display = 'block';
     const pct = Math.max(0, Math.min(1, boss.hp / boss.maxHp)) * 100;
     document.getElementById('boss-bar-fill').style.width = pct + '%';
@@ -641,13 +646,17 @@ export function createUI() {
     if (lastZombiesEl) return;
     lastZombiesEl = document.createElement('div');
     lastZombiesEl.id = 'last-zombies';
-    lastZombiesEl.style.cssText = 'position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:54;color:#ff4d7a;font-size:12px;display:none;text-shadow:0 0 6px #ff4d7a;animation:pulse 0.6s infinite alternate;';
+    lastZombiesEl.style.cssText =
+      'position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:54;color:#ff4d7a;font-size:12px;display:none;text-shadow:0 0 6px #ff4d7a;animation:pulse 0.6s infinite alternate;';
     document.body.appendChild(lastZombiesEl);
   }
 
   function setLastZombies(count) {
     ensureLastZombies();
-    if (!count) { lastZombiesEl.style.display = 'none'; return; }
+    if (!count) {
+      lastZombiesEl.style.display = 'none';
+      return;
+    }
     lastZombiesEl.style.display = 'block';
     lastZombiesEl.textContent = `最后 ${count} 只`;
   }
@@ -656,7 +665,8 @@ export function createUI() {
     if (waveStatsEl) return;
     waveStatsEl = document.createElement('div');
     waveStatsEl.id = 'wave-stats';
-    waveStatsEl.style.cssText = 'position:fixed;bottom:80px;right:12px;z-index:54;background:#0d1a0dcc;border:1px solid #48f0a044;border-radius:6px;padding:8px 12px;display:none;min-width:180px;';
+    waveStatsEl.style.cssText =
+      'position:fixed;bottom:80px;right:12px;z-index:54;background:#0d1a0dcc;border:1px solid #48f0a044;border-radius:6px;padding:8px 12px;display:none;min-width:180px;';
     document.body.appendChild(waveStatsEl);
   }
 
@@ -664,16 +674,23 @@ export function createUI() {
     ensureWaveStats();
     if (waveStatsTimer) clearTimeout(waveStatsTimer);
     const sorted = [...stats].sort((a, b) => b.kills - a.kills);
-    waveStatsEl.innerHTML = `<div style="color:#48f0a0;font-size:11px;margin-bottom:6px;letter-spacing:1px">第 ${wave} 关结算</div>`
-      + sorted.map(s => {
-        const isMine = s.pid === myId;
-        const col = isMine ? s.col : '#888';
-        return `<div style="color:${col};font-size:10px;line-height:1.8">`
-          + `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${s.col};margin-right:5px;vertical-align:middle"></span>`
-          + `${s.nm} &nbsp;击杀 ${s.kills} &nbsp;伤害 ${s.damage} &nbsp;零件 ${s.materials}</div>`;
-      }).join('');
+    waveStatsEl.innerHTML =
+      `<div style="color:#48f0a0;font-size:11px;margin-bottom:6px;letter-spacing:1px">第 ${wave} 关结算</div>` +
+      sorted
+        .map((s) => {
+          const isMine = s.pid === myId;
+          const col = isMine ? s.col : '#888';
+          return (
+            `<div style="color:${col};font-size:10px;line-height:1.8">` +
+            `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${s.col};margin-right:5px;vertical-align:middle"></span>` +
+            `${s.nm} &nbsp;击杀 ${s.kills} &nbsp;伤害 ${s.damage} &nbsp;零件 ${s.materials}</div>`
+          );
+        })
+        .join('');
     waveStatsEl.style.display = 'block';
-    waveStatsTimer = setTimeout(() => { waveStatsEl.style.display = 'none'; }, 8000);
+    waveStatsTimer = setTimeout(() => {
+      waveStatsEl.style.display = 'none';
+    }, 8000);
   }
 
   return {

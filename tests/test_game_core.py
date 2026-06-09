@@ -391,6 +391,60 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(any(ev == "reload_start" for ev, _ in events))
         self.assertTrue(any(ev == "reload_done" for ev, _ in events))
 
+    def test_ammo_pickup_reports_actual_gain_near_reserve_cap(self):
+        game, events = self.make_game()
+        player = game.players["p1"]
+        cap = game._max_reserve_for_player(player, "pistol")
+        player["ammo_reserve"]["pistol"] = cap - 3
+        player["current_reserve"] = cap - 3
+        item = {
+            "id": 91,
+            "x": player["x"],
+            "y": player["y"],
+            "type": "ammo_pistol",
+            "color": "#dce7f1",
+            "icon": "9",
+            "name": "手枪弹药",
+            "radius": 15,
+            "scene": SCENE_MAIN,
+        }
+
+        game._apply_item("p1", item, game._now())
+
+        self.assertEqual(player["ammo_reserve"]["pistol"], cap)
+        picked = [data for ev, data in events if ev == "item_pick"][-1]
+        self.assertEqual(picked["type"], "ammo_pistol")
+        self.assertEqual(picked["amount"], 3)
+        self.assertEqual(picked["currentReserve"], cap)
+
+    def test_full_ammo_pickup_recycles_to_parts(self):
+        game, events = self.make_game()
+        player = game.players["p1"]
+        cap = game._max_reserve_for_player(player, "pistol")
+        player["ammo_reserve"]["pistol"] = cap
+        player["current_reserve"] = cap
+        player["materials"] = 0
+        item = {
+            "id": 92,
+            "x": player["x"],
+            "y": player["y"],
+            "type": "ammo_pistol",
+            "color": "#dce7f1",
+            "icon": "9",
+            "name": "手枪弹药",
+            "radius": 15,
+            "scene": SCENE_MAIN,
+        }
+
+        game._apply_item("p1", item, game._now())
+
+        self.assertEqual(player["ammo_reserve"]["pistol"], cap)
+        self.assertEqual(player["materials"], 1)
+        picked = [data for ev, data in events if ev == "item_pick"][-1]
+        self.assertEqual(picked["type"], "parts")
+        self.assertEqual(picked["amount"], 1)
+        self.assertEqual(picked["materials"], 1)
+
     def test_weapon_reserve_pools_are_split_by_ammo_type(self):
         game, _ = self.make_game()
         player = game.players["p1"]
@@ -1643,6 +1697,52 @@ class GameCoreTest(unittest.TestCase):
         self.assertTrue(any(ev == "task_update" and data["type"] == "fuse" for ev, data in events))
         self.assertTrue(any(ev == "item_pick" and data["type"] == "fuse" for ev, data in events))
 
+    def test_extra_task_item_recycles_instead_of_overcounting_requirement(self):
+        game, events = self.make_game()
+        now = game._now()
+        player = game.players["p1"]
+        game.extractions = [dict(game.extractions[0], requires={"sample": 1})]
+        game.task_counts = {"fuse": 0, "sample": 1, "keycard": 0}
+        player["materials"] = 0
+        game.items[1] = {
+            "id": 1, "x": 1000, "y": 1000, "type": "sample",
+            "color": "#b7ff47", "icon": "V", "name": "病毒样本", "radius": 15,
+        }
+
+        game.tick(SERVER_DT, now=now)
+
+        self.assertEqual(game.task_counts["sample"], 1)
+        self.assertEqual(player["materials"], 1)
+        self.assertFalse(any(ev == "task_update" and data["type"] == "sample" for ev, data in events))
+        self.assertTrue(any(ev == "item_pick" and data["type"] == "parts" for ev, data in events))
+
+    def test_task_drop_respects_items_already_on_map(self):
+        game, _ = self.make_game()
+        game.extractions = [dict(game.extractions[0], requires={"keycard": 1})]
+        game.task_counts = {"fuse": 0, "sample": 0, "keycard": 0}
+        game.items = {
+            1: {
+                "id": 1, "x": 900, "y": 900, "type": "keycard",
+                "color": "#d98cff", "icon": "K", "name": "门禁卡", "radius": 15,
+            }
+        }
+        game._next_i = 2
+
+        game._try_drop_task_item(self.zombie(99, 1000, 1000, ztype="boss"))
+
+        self.assertEqual(len([item for item in game.items.values() if item["type"] == "keycard"]), 1)
+
+    def test_more_than_four_players_can_join_while_difficulty_scale_is_capped(self):
+        game, _ = self.make_game()
+
+        for idx in range(2, 6):
+            joined_idx, _, _ = game.add_player(f"p{idx}")
+            self.assertIsNotNone(joined_idx)
+
+        self.assertEqual(len(game.players), 5)
+        self.assertEqual(game._player_pressure_scale(4), 1.0)
+        self.assertEqual(game._player_pressure_scale(12), 1.0)
+
     def test_zombie_contact_damages_player(self):
         game, _ = self.make_game()
         now = game._now()
@@ -1863,6 +1963,38 @@ class GameCoreTest(unittest.TestCase):
         started = [data for ev, data in events if ev == "wave_start"][-1]
         self.assertEqual(started["routeReward"]["route"], "service")
         self.assertIn("features", started)
+
+    def test_service_extraction_reward_reports_actual_ammo_when_reserves_are_full(self):
+        game, events = self.make_game()
+        now = game._now()
+        player = game.players["p1"]
+        for ammo_type in MAX_RESERVE_BY_TYPE:
+            player["ammo_reserve"][ammo_type] = game._max_reserve_for_player(player, ammo_type)
+        game._sync_weapon_fields(player)
+        exit_point = {
+            "id": "service-full",
+            "type": "service",
+            "name": "维修通道",
+            "text": "找到保险丝，恢复卷帘门供电",
+            "requires": {},
+            "x": player["x"],
+            "y": player["y"],
+            "radius": MISSION_CAPTURE_RADIUS,
+            "charge": 0.99,
+            "visible": True,
+            "done": False,
+            "wave": game.wave,
+            "color": "#66d9ff",
+        }
+        game.extractions = [exit_point]
+        game.mission = exit_point
+        game.wave_kills = 999
+
+        game._update_mission(EXTRACTION_CAPTURE_SECONDS, now)
+
+        complete = [data for ev, data in events if ev == "mission_complete"][-1]
+        self.assertEqual(complete["amount"], 0)
+        self.assertIn("弹药已达上限", complete["rewardText"])
 
     def test_archive_extraction_requires_lore_and_grants_high_value_reward(self):
         game, events = self.make_game()

@@ -83,12 +83,12 @@ let gamePaused = false;
 let maxLevelNotified = false;
 const hintedTypes = new Set();
 const ITEM_HINTS = {
-  parts:        '整备时可升级天赋',
-  lore:         '收集解锁故事线索',
-  nuke:         '拾取后自动引爆，清除周围感染体',
-  adrenaline:   '移速+40%，持续8秒',
+  parts: '整备时可升级天赋',
+  lore: '收集解锁故事线索',
+  nuke: '拾取后自动引爆，清除周围感染体',
+  adrenaline: '移速+40%，持续8秒',
   damage_boost: '伤害+50%，持续8秒',
-  shield:       '对周围队友共享护盾',
+  shield: '对周围队友共享护盾',
 };
 let myCol = '#ffffff';
 let myNm = '幸存者';
@@ -824,6 +824,8 @@ function setupSocket() {
     updateLatency(performance.now() - sent);
   });
   sock.on('join_error', (data) => {
+    joining = false;
+    ui.setJoinLoading(false);
     if (data.reason === 'full') {
       ui.notify('房间已满', '#ff4d7a');
     }
@@ -1676,8 +1678,8 @@ function setupSocket() {
 function joinGame() {
   if (joining) return;
   inventoryOpen = false;
-    gamePaused = false;
-    ui.setPaused(false);
+  gamePaused = false;
+  ui.setPaused(false);
   ui.setInventoryOpen(false);
   audio.unlock();
   ui.setAudioOn(audio.enabled);
@@ -1706,8 +1708,8 @@ function restartStage() {
   const s = ensureSocket();
   if (!s) return;
   inventoryOpen = false;
-    gamePaused = false;
-    ui.setPaused(false);
+  gamePaused = false;
+  ui.setPaused(false);
   ui.setInventoryOpen(false);
   clearInput();
   ui.notify('放弃本关，重新部署...', '#ffb1bd');
